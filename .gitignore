@@ -15,7 +15,10 @@ temp/
 
 # Configuration with credentials
 config.yaml
+navidrome-data/
 
-# OS files
+# OS and tooling files
 .DS_Store
 Thumbs.db
+.taste-skill/
+.gemini/

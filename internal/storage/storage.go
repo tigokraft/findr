@@ -26,6 +26,8 @@ type Repository interface {
 	SaveDownloadJob(ctx context.Context, job *domain.DownloadJob) error
 	GetDownloadJob(ctx context.Context, id string) (*domain.DownloadJob, error)
 	ListActiveDownloadJobs(ctx context.Context) ([]domain.DownloadJob, error)
+	ListDownloadJobs(ctx context.Context, limit int) ([]domain.DownloadJob, error)
+	ClearDownloadHistory(ctx context.Context) error
 
 	Close() error
 }
@@ -40,6 +42,24 @@ func NewSQLiteRepository(path string) (*SQLiteRepository, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db at %s: %w", path, err)
+	}
+
+	// Limit connection pool to 1 open connection to prevent SQLite busy locks in DELETE journal mode
+	db.SetMaxOpenConns(1)
+
+	// Enable busy timeout and synchronous settings for concurrent access.
+	// NOTE: We use journal_mode = DELETE instead of WAL because WAL creates shared-memory (.shm)
+	// files that fail with disk I/O error (522) on macOS Docker VirtioFS host bind-mounts.
+	pragmas := []string{
+		"PRAGMA journal_mode = DELETE;",
+		"PRAGMA busy_timeout = 5000;",
+		"PRAGMA synchronous = NORMAL;",
+	}
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("execute pragma %s: %w", p, err)
+		}
 	}
 
 	repo := &SQLiteRepository{db: db}
@@ -397,6 +417,45 @@ func (r *SQLiteRepository) ListActiveDownloadJobs(ctx context.Context) ([]domain
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
+}
+
+func (r *SQLiteRepository) ListDownloadJobs(ctx context.Context, limit int) ([]domain.DownloadJob, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `SELECT id, album_id, downloader, download_dir, target_quality, status, progress, error_message, downloaded_files_json, created_at, completed_at FROM download_jobs ORDER BY created_at DESC LIMIT ?`
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []domain.DownloadJob
+	for rows.Next() {
+		var j domain.DownloadJob
+		var quality, status string
+		var filesJSON sql.NullString
+		var completedAt sql.NullTime
+
+		if err := rows.Scan(&j.ID, &j.AlbumID, &j.Downloader, &j.DownloadDir, &quality, &status, &j.Progress, &j.ErrorMessage, &filesJSON, &j.CreatedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		j.TargetQuality = domain.AudioQuality(quality)
+		j.Status = domain.DownloadStatus(status)
+		if completedAt.Valid {
+			j.CompletedAt = &completedAt.Time
+		}
+		if filesJSON.Valid && filesJSON.String != "" {
+			_ = json.Unmarshal([]byte(filesJSON.String), &j.DownloadedFiles)
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+func (r *SQLiteRepository) ClearDownloadHistory(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM download_jobs WHERE status IN ('completed', 'failed')")
+	return err
 }
 
 func (r *SQLiteRepository) Close() error {

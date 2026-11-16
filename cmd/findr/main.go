@@ -65,8 +65,9 @@ func main() {
 	switch cfg.Downloader.Preferred {
 	case "slskd":
 		dl = slskddl.NewDownloader(slskddl.Config{
-			URL:    cfg.Downloader.Slskd.URL,
-			APIKey: cfg.Downloader.Slskd.APIKey,
+			URL:         cfg.Downloader.Slskd.URL,
+			APIKey:      cfg.Downloader.Slskd.APIKey,
+			DownloadDir: cfg.Downloader.Slskd.DownloadDir,
 		})
 	default:
 		dl = qobuzdl.NewDownloader(qobuzdl.Config{
@@ -87,9 +88,16 @@ func main() {
 	})
 
 	imp := importer.NewImporter(importer.Config{
-		MusicPath:    cfg.Library.MusicPath,
-		FolderFormat: cfg.Library.FolderFormat,
-		FileFormat:   cfg.Library.FileFormat,
+		MusicPath:         cfg.Library.MusicPath,
+		FolderFormat:      cfg.Library.FolderFormat,
+		FileFormat:        cfg.Library.FileFormat,
+		DeleteAfterImport: cfg.Import.DeleteAfterImport,
+		MoveOrCopy:        cfg.Import.MoveOrCopy,
+		CleanEmptyFolders: cfg.Import.CleanEmptyFolders,
+		DownloadCoverArt:  cfg.Export.DownloadCoverArt,
+		CoverFilename:     cfg.Export.CoverFilename,
+		WriteNFO:          cfg.Export.WriteNFO,
+		GenerateM3U:       cfg.Export.GenerateM3U,
 	})
 
 	var navi *navidrome.Client
@@ -116,7 +124,7 @@ func main() {
 
 	switch command {
 	case "daemon":
-		handleDaemon(ctx, cfg, orch, repo, navi)
+		handleDaemon(ctx, cfg, *configPath, orch, repo, navi)
 	case "search":
 		handleSearch(ctx, idx)
 	case "add":
@@ -131,6 +139,8 @@ func main() {
 		handleDownload(ctx, orch)
 	case "scan":
 		handleScan(ctx, navi)
+	case "import-library", "scan-library":
+		handleImportLibrary(ctx, orch)
 	case "artists":
 		handleListArtists(ctx, repo)
 	case "version":
@@ -156,6 +166,7 @@ Commands:
   albums <artist-id>      List all indexed albums and releases for an artist
   artists                 List all monitored artists in your local database
   download <album-id>     Execute pipeline: download -> verify -> import -> navidrome scan
+  import-library          Scan music directory to automatically import all artists & albums
   scan                    Trigger a library scan on your Navidrome server
   version                 Print findr version
 
@@ -163,9 +174,9 @@ Flags:
   --config <path>         Path to findr YAML configuration (default: config.yaml)`)
 }
 
-func handleDaemon(ctx context.Context, cfg *config.Config, orch *orchestrator.Orchestrator, repo storage.Repository, navi *navidrome.Client) {
+func handleDaemon(ctx context.Context, cfg *config.Config, configPath string, orch *orchestrator.Orchestrator, repo storage.Repository, navi *navidrome.Client) {
 	fmt.Printf("Starting findr daemon on %s:%d...\n", cfg.Server.Host, cfg.Server.Port)
-	srv := server.NewServer(cfg, orch, repo, navi)
+	srv := server.NewServer(cfg, configPath, orch, repo, navi)
 	if err := srv.Start(ctx); err != nil && err != context.Canceled {
 		fmt.Fprintf(os.Stderr, "Daemon error: %v\n", err)
 		os.Exit(1)
@@ -373,4 +384,27 @@ func handleScan(ctx context.Context, navi *navidrome.Client) {
 	}
 
 	fmt.Printf("Navidrome scan triggered. Current track count: %d, Scanning: %v\n", status.Count, status.Scanning)
+}
+
+func handleImportLibrary(ctx context.Context, orch *orchestrator.Orchestrator) {
+	fmt.Println("Scanning library music path for existing artists...")
+	summary, err := orch.ImportArtistsFromLibrary(ctx, func(curr, total int, artist string) {
+		fmt.Printf("[%3d/%3d] Scanning %s...\n", curr, total, artist)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Library import failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nSUCCESS: Finished scanning library!\n")
+	fmt.Printf("Total folders found: %d\n", summary.TotalFoldersFound)
+	fmt.Printf("Artists imported:   %d\n", summary.ArtistsImported)
+	fmt.Printf("Artists reconciled: %d\n", summary.ArtistsReconciled)
+	fmt.Printf("Albums matched:     %d\n", summary.AlbumsMatched)
+	if len(summary.Errors) > 0 {
+		fmt.Printf("Warnings (%d):\n", len(summary.Errors))
+		for _, e := range summary.Errors {
+			fmt.Printf("  - %s\n", e)
+		}
+	}
 }

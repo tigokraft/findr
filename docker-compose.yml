@@ -30,8 +30,8 @@ services:
 
       # Navidrome integration
       - FINDR_NAVIDROME_URL=http://navidrome:4533
-      - FINDR_NAVIDROME_USER=${NAVIDROME_USER:-admin}
-      - FINDR_NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD:-adminpassword}
+      - FINDR_NAVIDROME_USER=${NAVIDROME_USER:-}
+      - FINDR_NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD:-}
     depends_on:
       - navidrome
 
@@ -47,8 +47,11 @@ services:
       - ND_LOGLEVEL=info
       - ND_SESSIONTIMEOUT=24h
     volumes:
-      - ./navidrome-data:/data
+      - navidrome-data:/data
       - ./music:/music:ro
+
+volumes:
+  navidrome-data:
 
   # Optional: slskd (Soulseek Daemon) for rare / underground track downloads
   # slskd:

@@ -1,0 +1,12 @@
+bin/
+findr
+music/
+downloads/
+config/music/
+config/downloads/
+config/findr.db*
+.git/
+.gemini/
+.taste-skill/
+navidrome-data/
+

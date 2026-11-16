@@ -100,6 +100,38 @@ func (c *Client) StartScan(ctx context.Context, fullScan bool) (*ScanStatus, err
 	return &subResp.SubsonicResponse.ScanStatus, nil
 }
 
+// Ping tests the connection and credentials to the Navidrome server.
+func (c *Client) Ping(ctx context.Context) error {
+	params := c.buildAuthParams()
+	reqURL := fmt.Sprintf("%s/rest/ping?%s", c.baseURL, params.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("navidrome connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var subResp subsonicResponse
+	if err := json.NewDecoder(resp.Body).Decode(&subResp); err != nil {
+		return fmt.Errorf("decode navidrome ping response: %w", err)
+	}
+
+	if subResp.SubsonicResponse.Status != "ok" {
+		errMsg := "authentication or server error"
+		if subResp.SubsonicResponse.Error != nil {
+			errMsg = subResp.SubsonicResponse.Error.Message
+		}
+		return fmt.Errorf("navidrome error: %s", errMsg)
+	}
+
+	return nil
+}
+
 // GetScanStatus checks whether Navidrome is currently scanning and how many tracks are indexed.
 func (c *Client) GetScanStatus(ctx context.Context) (*ScanStatus, error) {
 	params := c.buildAuthParams()

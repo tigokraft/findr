@@ -142,12 +142,35 @@ Finds the artist, monitors them, indexes their complete discography (Albums, EPs
 
 ---
 
-## Web Dashboard
+## Web Dashboard & Navigation
 
 When running `findr daemon` (or inside Docker), navigate to **`http://localhost:8686`**:
-- Search any artist in real-time via Deezer/Qobuz.
-- Click **"⚡ Track & Get Everything"** to auto-download and import their complete discography.
-- Click **"Trigger Navidrome Scan"** to update your library player anytime.
+
+### 1. 🎵 Library (`#/artists`)
+- Visual overview of all monitored artists with album counts, monitored state, and discography modals.
+- Filter artists in real-time, view release breakdowns (Albums, EPs, Singles, Compilations), and manage downloads.
+
+### 2. 🔍 Dedicated Search & Add Page (`#/search`)
+- Search any artist in real-time across Deezer (zero-auth) or Qobuz.
+- Rather than adding directly, browse a full list of matching artists with artwork and metadata.
+- **👁 Preview Discography**: Inspect an artist's full releases list directly from the indexer before adding.
+- **+ Add & Monitor**: Index discography without immediate downloading.
+- **⚡ Track & Get Everything**: Index and auto-download their complete discography.
+
+### 3. ⚡ Activity & Queue (`#/activity`)
+- Real-time tracker for in-flight, completed, pending, and failed downloads with retry capabilities.
+
+### 4. ⚙️ Full Lidarr-Style Configuration (`#/settings`)
+- **Media & Disks**: Music library destination path, staging download path, `{Artist}/{Album} ({Year})` folder templates, track file naming formats, and live storage disk gauges.
+- **Importing**: Duration tolerance, confidence score thresholds, partial matching allowance, staging cleanup, and file move vs. copy modes.
+- **Exporting**: High-resolution cover art downloading (`cover.jpg`), Kodi/Plex metadata (`album.nfo`), and sequential M3U playlist generation.
+- **Tokens & Indexers**: Deezer zero-auth provider, Qobuz user auth tokens & keys, and Spotify developer credentials.
+- **Download Clients**: Preferred engine selection, Qobuz target audio quality (Hi-Res 24-bit/192kHz down to 16-bit/44.1kHz FLAC and MP3 320k), and Soulseek / slskd P2P credentials.
+- **Navidrome Connection**: Subsonic API endpoint, MD5 salt + token authentication, live **"Test Connection"** diagnostic ping, and manual scan triggers.
+- **Backup & YAML**: Direct raw YAML editor, config export/download, and config file upload/restore.
+
+### 5. 💻 System & Disks (`#/system`)
+- Storage partition utilization, uptime, database health, and active indexer/downloader status.
 
 ---
 

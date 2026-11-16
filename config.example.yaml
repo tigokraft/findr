@@ -13,6 +13,23 @@ library:
   # Target audio file naming template
   file_format: "{Track:02d} - {Title}"
 
+import:
+  # Delete temporary download staging folder after successful verification & import
+  delete_after_import: true
+  # Transfer method: "move" (fast cut/rename) or "copy"
+  move_or_copy: "move"
+  # Clean empty folders in the downloads directory
+  clean_empty_folders: true
+
+export:
+  # Save original / 1000x1000 resolution cover art in album directory
+  download_cover_art: true
+  cover_filename: "cover.jpg"
+  # Write Kodi / Jellyfin / Plex album.nfo metadata
+  write_nfo: false
+  # Generate sequential playlist.m3u tracklist file
+  generate_m3u: false
+
 indexer:
   # Default metadata provider: "deezer" (zero auth required), "qobuz", or "spotify"
   default_provider: "deezer"
@@ -20,8 +37,9 @@ indexer:
     client_id: ""
     client_secret: ""
   qobuz:
-    app_id: "305874112"
+    app_id: "798273057"
     app_secret: ""
+    user_token: ""
 
 downloader:
   # Preferred downloader engine: "qobuz" or "slskd"
@@ -30,9 +48,10 @@ downloader:
     enabled: true
     username: ""
     password: ""
-    app_id: "305874112"
+    user_token: ""
+    app_id: "798273057"
     app_secret: ""
-    # Target audio quality: "flac_24_96", "flac_16_44" (CD Lossless), or "mp3_320"
+    # Target audio quality: "flac_24_192", "flac_24_96", "flac_16_44" (CD Lossless), or "mp3_320"
     target_quality: "flac_16_44"
   slskd:
     enabled: false

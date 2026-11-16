@@ -310,7 +310,7 @@ func (c *Client) GetAlbumDetails(ctx context.Context, albumID string) (*domain.A
 		}
 	}
 
-	for _, t := range tracks {
+	for i, t := range tracks {
 		title := t.Title
 		if t.TitleVersion != "" && !strings.Contains(title, t.TitleVersion) {
 			title = fmt.Sprintf("%s (%s)", title, t.TitleVersion)
@@ -321,13 +321,22 @@ func (c *Client) GetAlbumDetails(ctx context.Context, albumID string) (*domain.A
 			artistName = albumResp.Artist.Name
 		}
 
+		trackPos := t.TrackPosition
+		if trackPos <= 0 {
+			trackPos = i + 1
+		}
+		discNum := t.DiskNumber
+		if discNum <= 0 {
+			discNum = 1
+		}
+
 		album.Tracks = append(album.Tracks, domain.Track{
 			ID:          strconv.FormatInt(t.ID, 10),
 			AlbumID:     album.ID,
 			ArtistName:  artistName,
 			Title:       title,
-			DiscNumber:  t.DiskNumber,
-			TrackNumber: t.TrackPosition,
+			DiscNumber:  discNum,
+			TrackNumber: trackPos,
 			DurationSec: t.Duration,
 			ISRC:        t.ISRC,
 			Explicit:    t.Explicit,

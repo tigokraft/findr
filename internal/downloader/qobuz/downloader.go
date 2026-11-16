@@ -51,7 +51,15 @@ type Config struct {
 func NewDownloader(cfg Config) *Downloader {
 	appID := cfg.AppID
 	if appID == "" {
-		appID = "305874112"
+		appID = "798273057"
+	}
+	appSecret := cfg.AppSecret
+	if appSecret == "" {
+		if appID == "798273057" {
+			appSecret = "abb21364945c0583309667d13ca3d93a"
+		} else if appID == "305874112" {
+			appSecret = "d9f2e3798aa12ff5e13589b14c33f81e"
+		}
 	}
 	quality := cfg.TargetQuality
 	if quality == "" {
@@ -60,7 +68,7 @@ func NewDownloader(cfg Config) *Downloader {
 
 	return &Downloader{
 		appID:         appID,
-		appSecret:     cfg.AppSecret,
+		appSecret:     appSecret,
 		username:      cfg.Username,
 		password:      cfg.Password,
 		userToken:     cfg.UserToken,
@@ -108,7 +116,7 @@ func (d *Downloader) ValidateToken(ctx context.Context) (*UserInfo, error) {
 		return nil, fmt.Errorf("no qobuz user token configured")
 	}
 
-	reqURL := fmt.Sprintf("%s/user/get?app_id=%s", apiBaseURL, d.appID)
+	reqURL := fmt.Sprintf("%s/user/get?app_id=%s&user_auth_token=%s", apiBaseURL, d.appID, url.QueryEscape(token))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
@@ -160,7 +168,7 @@ func (d *Downloader) Authenticate(ctx context.Context) error {
 		return nil
 	}
 	if d.username == "" || d.password == "" {
-		return nil // Allow unauthenticated calls if running in preview/sample mode
+		return nil
 	}
 
 	reqURL := fmt.Sprintf("%s/user/login?username=%s&password=%s&app_id=%s",
@@ -183,11 +191,6 @@ func (d *Downloader) Authenticate(ctx context.Context) error {
 
 	var loginResp struct {
 		UserToken string `json:"user_auth_token"`
-		User      struct {
-			ID           int64  `json:"id"`
-			CredentialID int64  `json:"credential_id"`
-			Email        string `json:"email"`
-		} `json:"user"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
@@ -202,10 +205,17 @@ func (d *Downloader) Authenticate(ctx context.Context) error {
 func (d *Downloader) Search(ctx context.Context, album *domain.Album) ([]downloader.SearchResult, error) {
 	query := fmt.Sprintf("%s %s", album.ArtistName, album.Title)
 	reqURL := fmt.Sprintf("%s/album/search?query=%s&app_id=%s&limit=5", apiBaseURL, url.QueryEscape(query), d.appID)
+	if d.userToken != "" {
+		reqURL += fmt.Sprintf("&user_auth_token=%s", url.QueryEscape(d.userToken))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
+	}
+	req.Header.Set("X-App-Id", d.appID)
+	if d.userToken != "" {
+		req.Header.Set("X-User-Auth-Token", d.userToken)
 	}
 
 	resp, err := d.httpClient.Do(req)
@@ -255,6 +265,115 @@ func (d *Downloader) Search(ctx context.Context, album *domain.Album) ([]downloa
 	return results, nil
 }
 
+type qobuzAlbumMatch struct {
+	trackByNum   map[int]string
+	trackByTitle map[string]string
+	tracks       []string
+}
+
+// resolveQobuzTracks maps external indexer album tracks to native Qobuz track IDs.
+func (d *Downloader) resolveQobuzTracks(ctx context.Context, album *domain.Album) (*qobuzAlbumMatch, error) {
+	query := fmt.Sprintf("%s %s", album.ArtistName, album.Title)
+	reqURL := fmt.Sprintf("%s/album/search?query=%s&app_id=%s&limit=8", apiBaseURL, url.QueryEscape(query), d.appID)
+	if d.userToken != "" {
+		reqURL += fmt.Sprintf("&user_auth_token=%s", url.QueryEscape(d.userToken))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-App-Id", d.appID)
+	if d.userToken != "" {
+		req.Header.Set("X-User-Auth-Token", d.userToken)
+	}
+
+	resp, err := d.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("qobuz search failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var searchResp struct {
+		Albums struct {
+			Items []struct {
+				ID          string `json:"id"`
+				Title       string `json:"title"`
+				UPC         string `json:"upc"`
+				TracksCount int    `json:"tracks_count"`
+			} `json:"items"`
+		} `json:"albums"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("decode qobuz search response: %w", err)
+	}
+
+	items := searchResp.Albums.Items
+	if len(items) == 0 {
+		return nil, fmt.Errorf("album '%s - %s' not found on Qobuz catalog", album.ArtistName, album.Title)
+	}
+
+	matchedAlbumID := items[0].ID
+	if album.UPC != "" {
+		for _, it := range items {
+			if it.UPC == album.UPC || strings.TrimLeft(it.UPC, "0") == strings.TrimLeft(album.UPC, "0") {
+				matchedAlbumID = it.ID
+				break
+			}
+		}
+	}
+
+	albumURL := fmt.Sprintf("%s/album/get?album_id=%s&app_id=%s", apiBaseURL, matchedAlbumID, d.appID)
+	if d.userToken != "" {
+		albumURL += fmt.Sprintf("&user_auth_token=%s", url.QueryEscape(d.userToken))
+	}
+
+	reqAlb, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	reqAlb.Header.Set("X-App-Id", d.appID)
+	if d.userToken != "" {
+		reqAlb.Header.Set("X-User-Auth-Token", d.userToken)
+	}
+
+	respAlb, err := d.httpClient.Do(reqAlb)
+	if err != nil {
+		return nil, fmt.Errorf("qobuz get album tracks failed: %w", err)
+	}
+	defer respAlb.Body.Close()
+
+	var albResp struct {
+		Tracks struct {
+			Items []struct {
+				ID          int64  `json:"id"`
+				Title       string `json:"title"`
+				TrackNumber int    `json:"track_number"`
+				MediaNumber int    `json:"media_number"`
+			} `json:"items"`
+		} `json:"tracks"`
+	}
+
+	if err := json.NewDecoder(respAlb.Body).Decode(&albResp); err != nil {
+		return nil, fmt.Errorf("decode qobuz album details: %w", err)
+	}
+
+	match := &qobuzAlbumMatch{
+		trackByNum:   make(map[int]string),
+		trackByTitle: make(map[string]string),
+		tracks:       make([]string, 0, len(albResp.Tracks.Items)),
+	}
+	for _, t := range albResp.Tracks.Items {
+		trackID := strconv.FormatInt(t.ID, 10)
+		match.trackByNum[t.TrackNumber] = trackID
+		match.trackByTitle[strings.ToLower(strings.TrimSpace(t.Title))] = trackID
+		match.tracks = append(match.tracks, trackID)
+	}
+
+	return match, nil
+}
+
 // Download downloads all tracks of the specified album into targetDir.
 func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDir string, progress downloader.ProgressFunc) (*domain.DownloadJob, error) {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
@@ -282,6 +401,22 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 		return nil, fmt.Errorf("album has no tracks defined")
 	}
 
+	fmt.Printf("[Qobuz Downloader] Preparing download for '%s - %s' (Source: %s, Tracks: %d)\n",
+		album.ArtistName, album.Title, album.Source, totalTracks)
+
+	// Resolve external track IDs (e.g. from Deezer) to native Qobuz track IDs
+	var qobuzMatch *qobuzAlbumMatch
+	if album.Source != "qobuz" {
+		fmt.Printf("[Qobuz Downloader] Resolving external '%s' release on Qobuz catalog...\n", album.Source)
+		resolved, err := d.resolveQobuzTracks(ctx, album)
+		if err != nil {
+			fmt.Printf("[Qobuz Downloader] Warning: could not resolve Qobuz album: %v\n", err)
+			return nil, fmt.Errorf("resolve album on qobuz: %w", err)
+		}
+		qobuzMatch = resolved
+		fmt.Printf("[Qobuz Downloader] Successfully matched %d tracks on Qobuz\n", len(qobuzMatch.tracks))
+	}
+
 	var downloadedFiles []string
 	for i, trk := range album.Tracks {
 		select {
@@ -297,21 +432,43 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 			fileExt = "mp3"
 		}
 
+		trackNum := trk.TrackNumber
+		if trackNum <= 0 {
+			trackNum = i + 1
+		}
+
 		sanitizedTitle := sanitizeFilename(trk.Title)
-		filename := fmt.Sprintf("%02d - %s.%s", trk.TrackNumber, sanitizedTitle, fileExt)
+		filename := fmt.Sprintf("%02d - %s.%s", trackNum, sanitizedTitle, fileExt)
 		if trk.DiscNumber > 1 {
-			filename = fmt.Sprintf("%d-%02d - %s.%s", trk.DiscNumber, trk.TrackNumber, sanitizedTitle, fileExt)
+			filename = fmt.Sprintf("%d-%02d - %s.%s", trk.DiscNumber, trackNum, sanitizedTitle, fileExt)
 		}
 		destPath := filepath.Join(targetDir, filename)
 
 		if progress != nil {
 			pct := float64(i) / float64(totalTracks) * 100.0
-			progress(pct, fmt.Sprintf("Downloading track %d/%d: %s", i+1, totalTracks, trk.Title))
+			progress(pct, fmt.Sprintf("Downloading track [%d/%d]: %s", i+1, totalTracks, trk.Title))
 		}
 
-		fileURL, err := d.getTrackFileURL(ctx, trk.SourceID, formatID)
+		trackID := trk.SourceID
+		if qobuzMatch != nil {
+			if qID, ok := qobuzMatch.trackByNum[trackNum]; ok && qID != "" {
+				trackID = qID
+			} else if qID, ok := qobuzMatch.trackByNum[i+1]; ok && qID != "" {
+				trackID = qID
+			} else if qID, ok := qobuzMatch.trackByTitle[strings.ToLower(strings.TrimSpace(trk.Title))]; ok && qID != "" {
+				trackID = qID
+			} else if i < len(qobuzMatch.tracks) {
+				trackID = qobuzMatch.tracks[i]
+			} else {
+				return nil, fmt.Errorf("track %d '%s' not found on Qobuz album", trackNum, trk.Title)
+			}
+		}
+
+		fmt.Printf("[Qobuz Downloader] Downloading track [%d/%d] (Qobuz Track ID: %s): %s\n", i+1, totalTracks, trackID, trk.Title)
+
+		fileURL, err := d.getTrackFileURL(ctx, trackID, formatID)
 		if err != nil {
-			return nil, fmt.Errorf("get file url for track %s (%s): %w", trk.Title, trk.SourceID, err)
+			return nil, fmt.Errorf("get file url for track %d '%s' (qobuz_id=%s): %w", trackNum, trk.Title, trackID, err)
 		}
 
 		if err := d.downloadToFile(ctx, fileURL, destPath); err != nil {
@@ -330,6 +487,9 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 	if progress != nil {
 		progress(100.0, "All tracks downloaded successfully")
 	}
+
+	fmt.Printf("[Qobuz Downloader] Successfully downloaded all %d tracks for '%s - %s'\n",
+		len(downloadedFiles), album.ArtistName, album.Title)
 
 	return job, nil
 }
@@ -444,24 +604,22 @@ func (d *Downloader) downloadToFile(ctx context.Context, mediaURL, destPath stri
 	return err
 }
 
-func (d *Downloader) mapQualityToFormatID(q domain.AudioQuality) int {
-	switch q {
-	case domain.QualityMP3320:
-		return 5
-	case domain.QualityFLAC16:
-		return 6
-	case domain.QualityFLAC2496:
-		return 7
+func (d *Downloader) mapQualityToFormatID(quality domain.AudioQuality) int {
+	switch quality {
 	case domain.QualityFLAC2419:
-		return 27
+		return 27 // 24-bit / 192kHz FLAC
+	case domain.QualityFLAC2496:
+		return 7 // 24-bit / 96kHz FLAC
+	case domain.QualityMP3320:
+		return 5 // MP3 320kbps
 	default:
-		return 6
+		return 6 // 16-bit / 44.1kHz FLAC CD Quality
 	}
 }
 
-func sanitizeFilename(s string) string {
+func sanitizeFilename(name string) string {
 	invalidChars := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
-	res := s
+	res := name
 	for _, c := range invalidChars {
 		res = strings.ReplaceAll(res, c, "_")
 	}

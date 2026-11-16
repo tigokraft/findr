@@ -29,7 +29,7 @@ type Client struct {
 // NewClient initializes a Qobuz catalog indexer.
 func NewClient(appID string) *Client {
 	if appID == "" {
-		appID = "305874112" // Default fallback app_id
+		appID = "798273057" // Standard Qobuz client ID
 	}
 	return &Client{
 		baseURL: defaultBaseURL,

@@ -55,7 +55,7 @@ func TestValidateTokenWithMockServer(t *testing.T) {
 	defer mockServer.Close()
 
 	dl := NewDownloader(Config{
-		AppID:     "305874112",
+		AppID:     "798273057",
 		UserToken: "valid-test-token",
 	})
 	// Point to mock server URL by overriding httpClient
@@ -77,7 +77,10 @@ func TestValidateTokenWithMockServer(t *testing.T) {
 	// Test with invalid token
 	reqInvalid, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, mockServer.URL+"/user/get", nil)
 	reqInvalid.Header.Set("X-User-Auth-Token", "wrong-token")
-	respInvalid, _ := dl.httpClient.Do(reqInvalid)
+	respInvalid, err := dl.httpClient.Do(reqInvalid)
+	if err != nil {
+		t.Fatalf("failed invalid request: %v", err)
+	}
 	defer respInvalid.Body.Close()
 
 	if respInvalid.StatusCode != http.StatusUnauthorized {
