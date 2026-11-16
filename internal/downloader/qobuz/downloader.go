@@ -71,8 +71,84 @@ func NewDownloader(cfg Config) *Downloader {
 	}
 }
 
+// UserInfo contains details about the authenticated Qobuz user and subscription.
+type UserInfo struct {
+	ID           int64  `json:"id"`
+	Email        string `json:"email"`
+	Country      string `json:"country"`
+	Subscription string `json:"subscription"`
+	IsActive     bool   `json:"is_active"`
+}
+
 func (d *Downloader) Name() string {
 	return "qobuz"
+}
+
+// UserToken returns current active user token.
+func (d *Downloader) UserToken() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.userToken
+}
+
+// SetUserToken explicitly sets the user token.
+func (d *Downloader) SetUserToken(token string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.userToken = strings.TrimSpace(token)
+}
+
+// ValidateToken verifies that the configured user token is valid against Qobuz API.
+func (d *Downloader) ValidateToken(ctx context.Context) (*UserInfo, error) {
+	d.mu.Lock()
+	token := d.userToken
+	d.mu.Unlock()
+
+	if token == "" {
+		return nil, fmt.Errorf("no qobuz user token configured")
+	}
+
+	reqURL := fmt.Sprintf("%s/user/get?app_id=%s", apiBaseURL, d.appID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-User-Auth-Token", token)
+	req.Header.Set("X-App-Id", d.appID)
+
+	resp, err := d.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("qobuz validate token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("invalid qobuz user token (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var userResp struct {
+		ID           int64  `json:"id"`
+		Email        string `json:"email"`
+		CountryCode  string `json:"country_code"`
+		Subscription struct {
+			Offer  string `json:"offer"`
+			Period string `json:"period"`
+		} `json:"subscription"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&userResp); err != nil {
+		return nil, fmt.Errorf("decode user response: %w", err)
+	}
+
+	return &UserInfo{
+		ID:           userResp.ID,
+		Email:        userResp.Email,
+		Country:      userResp.CountryCode,
+		Subscription: userResp.Subscription.Offer,
+		IsActive:     true,
+	}, nil
 }
 
 // Authenticate logs in with credentials if user token is not yet established.
@@ -301,6 +377,9 @@ func (d *Downloader) getTrackFileURL(ctx context.Context, trackID string, format
 
 	if sig != "" {
 		reqURL += fmt.Sprintf("&request_sig=%s", sig)
+	}
+	if d.userToken != "" {
+		reqURL += fmt.Sprintf("&user_auth_token=%s", url.QueryEscape(d.userToken))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)

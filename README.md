@@ -60,65 +60,94 @@ MusicBrainz has historically caused major pain points for music collectors:
 
 ## Getting Started
 
-### 1. Build from Source
+### 1. Docker Deployment (Recommended)
+
+`findr` is designed to run directly in your Docker media stack alongside **Navidrome**.
+
+```bash
+# Clone the repository
+git clone https://github.com/findr-app/findr.git
+cd findr
+
+# Start findr and Navidrome together
+docker compose up -d
+```
+
+- **findr Web Dashboard**: `http://localhost:8686`
+- **Navidrome Web Player**: `http://localhost:4533`
+
+#### Qobuz User Token Configuration
+You can pass your Qobuz `user_auth_token` directly via environment variable in `docker-compose.yml`:
+```yaml
+environment:
+  - FINDR_QOBUZ_USER_TOKEN=your_extracted_user_auth_token_here
+  - FINDR_NAVIDROME_URL=http://navidrome:4533
+  - FINDR_NAVIDROME_USER=admin
+  - FINDR_NAVIDROME_PASSWORD=your_password
+```
+*(You can obtain your token by inspecting network requests on the Qobuz web player or from your existing `qobuz-dl` config).*
+
+---
+
+### 2. Standalone Binary Build
 
 Requirements: Go 1.22+
 
 ```bash
-git clone https://github.com/findr-app/findr.git
-cd findr
 make build
-```
-
-### 2. Configuration
-
-Copy the example configuration:
-```bash
 cp config.example.yaml config.yaml
+./bin/findr daemon
 ```
-
-Edit `config.yaml` to specify your music directory, Qobuz account credentials, and Navidrome server URL.
 
 ---
 
-## CLI Usage
+## CLI & Automation Usage
+
+### Track an Artist and Get Everything
+```bash
+./bin/findr track "Justice"
+```
+Finds the artist, monitors them, indexes their complete discography (Albums, EPs, Singles), downloads every release, verifies each track against canonical metadata, imports into `/music`, and triggers a single Navidrome library scan when done.
 
 ### Search for an Artist
 ```bash
 ./bin/findr search "Daft Punk"
 ```
 
-### Add and Monitor Artist Discography
+### Add and Monitor Artist Discography (Without Immediate Download)
 ```bash
 ./bin/findr add "Daft Punk"
 ```
-Finds the artist, adds them to your local SQLite database, and indexes all studio albums, EPs, and singles.
 
-### List Artist Releases
+### Download Artist Discography
 ```bash
+./bin/findr download-artist <artist-id>
+```
+
+### List Monitored Artists & Releases
+```bash
+./bin/findr artists
 ./bin/findr albums <artist-id>
 ```
 
-### List All Monitored Artists
-```bash
-./bin/findr artists
-```
-
-### Download, Verify, and Import an Album
+### Download, Verify, and Import a Single Album
 ```bash
 ./bin/findr download <album-id>
 ```
-Executes the automated pipeline:
-1. Fetches full tracklist and durations from indexer
-2. Downloads files via Qobuz or slskd into a temporary staging folder
-3. Scans and verifies audio files (scoring title, track number, and duration within tolerance)
-4. Imports verified files into organized library folders and saves cover art
-5. Triggers a background scan on your Navidrome server
 
 ### Trigger Navidrome Scan
 ```bash
 ./bin/findr scan
 ```
+
+---
+
+## Web Dashboard
+
+When running `findr daemon` (or inside Docker), navigate to **`http://localhost:8686`**:
+- Search any artist in real-time via Deezer/Qobuz.
+- Click **"⚡ Track & Get Everything"** to auto-download and import their complete discography.
+- Click **"Trigger Navidrome Scan"** to update your library player anytime.
 
 ---
 

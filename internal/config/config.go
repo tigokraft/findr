@@ -44,6 +44,7 @@ type SpotifyConfig struct {
 type QobuzConfig struct {
 	AppID     string `yaml:"app_id"`
 	AppSecret string `yaml:"app_secret"`
+	UserToken string `yaml:"user_token"`
 }
 
 type DownloaderConfig struct {
@@ -56,6 +57,7 @@ type QobuzDLConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	Username      string `yaml:"username"`
 	Password      string `yaml:"password"`
+	UserToken     string `yaml:"user_token"`
 	AppID         string `yaml:"app_id"`
 	AppSecret     string `yaml:"app_secret"`
 	TargetQuality string `yaml:"target_quality"` // "flac_24_96", "flac_16_44", "mp3_320"
@@ -161,6 +163,18 @@ func Load(path string) (*Config, error) {
 	}
 	if val := os.Getenv("FINDR_QOBUZ_PASSWORD"); val != "" {
 		cfg.Downloader.Qobuz.Password = val
+	}
+	if val := os.Getenv("FINDR_QOBUZ_USER_TOKEN"); val != "" {
+		cfg.Downloader.Qobuz.UserToken = val
+		cfg.Indexer.Qobuz.UserToken = val
+	}
+	if val := os.Getenv("FINDR_QOBUZ_APP_ID"); val != "" {
+		cfg.Downloader.Qobuz.AppID = val
+		cfg.Indexer.Qobuz.AppID = val
+	}
+	if val := os.Getenv("FINDR_QOBUZ_APP_SECRET"); val != "" {
+		cfg.Downloader.Qobuz.AppSecret = val
+		cfg.Indexer.Qobuz.AppSecret = val
 	}
 	if val := os.Getenv("FINDR_NAVIDROME_URL"); val != "" {
 		cfg.Navidrome.URL = val

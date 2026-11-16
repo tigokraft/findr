@@ -48,7 +48,108 @@ func NewOrchestrator(
 	}
 }
 
-// SearchAndAddArtist finds an artist via indexer, saves them to database, and pulls their discography.
+// ArtistDownloadSummary summarizes batch download and import of an artist's discography.
+type ArtistDownloadSummary struct {
+	ArtistID      string            `json:"artist_id"`
+	ArtistName    string            `json:"artist_name"`
+	TotalReleases int               `json:"total_releases"`
+	Successful    int               `json:"successful"`
+	Failed        int               `json:"failed"`
+	Skipped       int               `json:"skipped"` // Already completed
+	ImportedPaths []string          `json:"imported_paths"`
+	Errors        map[string]string `json:"errors,omitempty"`
+}
+
+// TrackAndDownloadArtist searches an artist, adds them to database, and downloads their entire discography.
+func (o *Orchestrator) TrackAndDownloadArtist(ctx context.Context, query string, releaseTypes []domain.ReleaseType, progress downloader.ProgressFunc) (*domain.Artist, *ArtistDownloadSummary, error) {
+	artist, _, err := o.SearchAndAddArtist(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	summary, err := o.DownloadArtistReleases(ctx, artist.ID, releaseTypes, progress)
+	return artist, summary, err
+}
+
+// DownloadArtistReleases downloads and imports all monitored releases (Albums, EPs, Singles) for an artist.
+func (o *Orchestrator) DownloadArtistReleases(ctx context.Context, artistID string, releaseTypes []domain.ReleaseType, progress downloader.ProgressFunc) (*ArtistDownloadSummary, error) {
+	artist, err := o.repo.GetArtist(ctx, artistID)
+	if err != nil {
+		return nil, fmt.Errorf("retrieve artist %s: %w", artistID, err)
+	}
+	if artist == nil {
+		return nil, fmt.Errorf("artist %s not found", artistID)
+	}
+
+	albums, err := o.repo.ListAlbumsByArtist(ctx, artistID)
+	if err != nil {
+		return nil, fmt.Errorf("list albums for artist %s: %w", artistID, err)
+	}
+
+	typeFilterMap := make(map[domain.ReleaseType]bool)
+	for _, t := range releaseTypes {
+		typeFilterMap[t] = true
+	}
+
+	summary := &ArtistDownloadSummary{
+		ArtistID:      artist.ID,
+		ArtistName:    artist.Name,
+		TotalReleases: len(albums),
+		ImportedPaths: make([]string, 0),
+		Errors:        make(map[string]string),
+	}
+
+	importedCount := 0
+	for i, alb := range albums {
+		select {
+		case <-ctx.Done():
+			return summary, ctx.Err()
+		default:
+		}
+
+		if len(typeFilterMap) > 0 && !typeFilterMap[alb.ReleaseType] {
+			continue
+		}
+
+		if alb.Status == domain.StatusCompleted {
+			summary.Skipped++
+			continue
+		}
+
+		if progress != nil {
+			progress(float64(i)/float64(len(albums))*100.0,
+				fmt.Sprintf("Processing [%d/%d] (%s): %s", i+1, len(albums), alb.ReleaseType, alb.Title))
+		}
+
+		_, impResult, err := o.ProcessAlbumPipeline(ctx, alb.ID, progress)
+		if err != nil {
+			summary.Failed++
+			summary.Errors[alb.ID] = fmt.Sprintf("%s: %v", alb.Title, err)
+			continue
+		}
+
+		summary.Successful++
+		importedCount++
+		if impResult != nil {
+			summary.ImportedPaths = append(summary.ImportedPaths, impResult.AlbumDir)
+		}
+	}
+
+	// Trigger Navidrome scan once after the entire batch finishes
+	if importedCount > 0 && o.cfg.Navidrome.Enabled && o.navidrome != nil {
+		if progress != nil {
+			progress(99.0, "Triggering Navidrome library scan for imported releases...")
+		}
+		_, _ = o.navidrome.StartScan(ctx, false)
+	}
+
+	if progress != nil {
+		progress(100.0, fmt.Sprintf("Completed artist discography download: %d imported, %d skipped, %d failed",
+			summary.Successful, summary.Skipped, summary.Failed))
+	}
+
+	return summary, nil
+}
 func (o *Orchestrator) SearchAndAddArtist(ctx context.Context, query string) (*domain.Artist, []domain.Album, error) {
 	artists, err := o.indexer.SearchArtist(ctx, query)
 	if err != nil {

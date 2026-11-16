@@ -20,6 +20,7 @@ import (
 	qobuzidx "github.com/findr-app/findr/internal/indexer/qobuz"
 	"github.com/findr-app/findr/internal/navidrome"
 	"github.com/findr-app/findr/internal/orchestrator"
+	"github.com/findr-app/findr/internal/server"
 	"github.com/findr-app/findr/internal/storage"
 	"github.com/findr-app/findr/internal/verifier"
 )
@@ -73,6 +74,7 @@ func main() {
 			AppSecret:     cfg.Downloader.Qobuz.AppSecret,
 			Username:      cfg.Downloader.Qobuz.Username,
 			Password:      cfg.Downloader.Qobuz.Password,
+			UserToken:     cfg.Downloader.Qobuz.UserToken,
 			TargetQuality: domain.AudioQuality(cfg.Downloader.Qobuz.TargetQuality),
 		})
 	}
@@ -113,10 +115,16 @@ func main() {
 	}()
 
 	switch command {
+	case "daemon":
+		handleDaemon(ctx, cfg, orch, repo, navi)
 	case "search":
 		handleSearch(ctx, idx)
 	case "add":
 		handleAdd(ctx, orch)
+	case "track":
+		handleTrack(ctx, orch)
+	case "download-artist":
+		handleDownloadArtist(ctx, orch)
 	case "albums":
 		handleListAlbums(ctx, repo, idx)
 	case "download":
@@ -140,8 +148,11 @@ Usage:
   findr <command> [arguments] [flags]
 
 Commands:
+  daemon                  Run findr in background daemon mode with HTTP API & Web UI
   search <query>          Search for an artist on the configured indexer (Deezer/Qobuz)
-  add <artist-name>       Find an artist, monitor them, and index all their albums & singles
+  add <artist-name>       Find an artist, monitor them, and index all their releases
+  track <artist-name>     Track artist and immediately download their entire discography
+  download-artist <id>    Download all missing releases for an artist
   albums <artist-id>      List all indexed albums and releases for an artist
   artists                 List all monitored artists in your local database
   download <album-id>     Execute pipeline: download -> verify -> import -> navidrome scan
@@ -150,6 +161,61 @@ Commands:
 
 Flags:
   --config <path>         Path to findr YAML configuration (default: config.yaml)`)
+}
+
+func handleDaemon(ctx context.Context, cfg *config.Config, orch *orchestrator.Orchestrator, repo storage.Repository, navi *navidrome.Client) {
+	fmt.Printf("Starting findr daemon on %s:%d...\n", cfg.Server.Host, cfg.Server.Port)
+	srv := server.NewServer(cfg, orch, repo, navi)
+	if err := srv.Start(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "Daemon error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("findr daemon stopped gracefully.")
+}
+
+func handleTrack(ctx context.Context, orch *orchestrator.Orchestrator) {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: findr track <artist-name>")
+		os.Exit(1)
+	}
+	query := os.Args[2]
+	fmt.Printf("Tracking and downloading entire discography for '%s'...\n", query)
+
+	progressFn := func(pct float64, msg string) {
+		fmt.Printf("[%5.1f%%] %s\n", pct, msg)
+	}
+
+	artist, summary, err := orch.TrackAndDownloadArtist(ctx, query, nil, progressFn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Track error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nSUCCESS: Finished tracking '%s' (ID: %s)\n", artist.Name, artist.ID)
+	fmt.Printf("Discography Summary: Total=%d, Imported=%d, Skipped=%d, Failed=%d\n",
+		summary.TotalReleases, summary.Successful, summary.Skipped, summary.Failed)
+}
+
+func handleDownloadArtist(ctx context.Context, orch *orchestrator.Orchestrator) {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: findr download-artist <artist-id>")
+		os.Exit(1)
+	}
+	artistID := os.Args[2]
+	fmt.Printf("Starting batch discography download for artist ID %s...\n", artistID)
+
+	progressFn := func(pct float64, msg string) {
+		fmt.Printf("[%5.1f%%] %s\n", pct, msg)
+	}
+
+	summary, err := orch.DownloadArtistReleases(ctx, artistID, nil, progressFn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Download artist error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nSummary for %s: Total=%d, Imported=%d, Skipped=%d, Failed=%d\n",
+		summary.ArtistName, summary.TotalReleases, summary.Successful, summary.Skipped, summary.Failed)
 }
 
 func handleSearch(ctx context.Context, idx indexer.Indexer) {

@@ -1,0 +1,66 @@
+services:
+  # findr: Music Manager, Discography Monitor & Downloader
+  findr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: findr:latest
+    container_name: findr
+    restart: unless-stopped
+    ports:
+      - "8686:8686"
+    volumes:
+      # Persistent configuration and SQLite database
+      - ./config:/config
+      # Target music library directory (shared with Navidrome)
+      - ./music:/music
+      # Temporary staging directory for in-flight downloads
+      - ./downloads:/downloads
+    environment:
+      # Library paths
+      - FINDR_MUSIC_PATH=/music
+      - FINDR_DOWNLOAD_PATH=/downloads
+
+      # Qobuz configuration (use your active user token)
+      # You can extract this from your Qobuz web app cookies / local storage
+      - FINDR_QOBUZ_USER_TOKEN=${QOBUZ_USER_TOKEN:-}
+      # Or supply username/password for automated token generation
+      - FINDR_QOBUZ_USERNAME=${QOBUZ_USERNAME:-}
+      - FINDR_QOBUZ_PASSWORD=${QOBUZ_PASSWORD:-}
+
+      # Navidrome integration
+      - FINDR_NAVIDROME_URL=http://navidrome:4533
+      - FINDR_NAVIDROME_USER=${NAVIDROME_USER:-admin}
+      - FINDR_NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD:-adminpassword}
+    depends_on:
+      - navidrome
+
+  # Navidrome: Modern Music Server and Streamer
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    restart: unless-stopped
+    ports:
+      - "4533:4533"
+    environment:
+      - ND_SCANSCHEDULE=1h
+      - ND_LOGLEVEL=info
+      - ND_SESSIONTIMEOUT=24h
+    volumes:
+      - ./navidrome-data:/data
+      - ./music:/music:ro
+
+  # Optional: slskd (Soulseek Daemon) for rare / underground track downloads
+  # slskd:
+  #   image: slskd/slskd:latest
+  #   container_name: slskd
+  #   restart: unless-stopped
+  #   ports:
+  #     - "5030:5030"
+  #     - "50300:50300"
+  #   environment:
+  #     - SLSKD_SLSK_USERNAME=your_soulseek_username
+  #     - SLSKD_SLSK_PASSWORD=your_soulseek_password
+  #   volumes:
+  #     - ./slskd-data:/app
+  #     - ./downloads/slskd:/downloads
