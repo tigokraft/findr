@@ -607,6 +607,60 @@ func (o *Orchestrator) EnqueueArtistReleases(ctx context.Context, artistID strin
 	return o.queueMgr.EnqueueBatch(toEnqueue)
 }
 
+// EnqueueAllMissingReleases checks all monitored artists, finds all uncompleted releases,
+// and enqueues them for concurrent downloading.
+func (o *Orchestrator) EnqueueAllMissingReleases(ctx context.Context, releaseTypes []domain.ReleaseType) (int, int, error) {
+	artists, err := o.repo.ListArtists(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list artists: %w", err)
+	}
+
+	typeFilterMap := make(map[domain.ReleaseType]bool)
+	for _, t := range releaseTypes {
+		typeFilterMap[t] = true
+	}
+
+	var toEnqueue []string
+	artistsChecked := 0
+
+	for _, artist := range artists {
+		if !artist.Monitored {
+			continue
+		}
+		artistsChecked++
+
+		albums, err := o.repo.ListAlbumsByArtist(ctx, artist.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, alb := range albums {
+			if len(typeFilterMap) > 0 && !typeFilterMap[alb.ReleaseType] {
+				continue
+			}
+			if alb.Status == domain.StatusCompleted {
+				continue
+			}
+			toEnqueue = append(toEnqueue, alb.ID)
+		}
+	}
+
+	if o.queueMgr == nil {
+		return artistsChecked, 0, fmt.Errorf("queue manager not initialized")
+	}
+
+	if len(toEnqueue) == 0 {
+		return artistsChecked, 0, nil
+	}
+
+	enqueuedCount, err := o.queueMgr.EnqueueBatch(toEnqueue)
+	if err != nil {
+		return artistsChecked, 0, fmt.Errorf("enqueue batch: %w", err)
+	}
+
+	return artistsChecked, enqueuedCount, nil
+}
+
 // CancelDownload cancels an ongoing or pending download job.
 func (o *Orchestrator) CancelDownload(albumID string) error {
 	if o.queueMgr == nil {

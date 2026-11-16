@@ -64,6 +64,7 @@ func NewServer(cfg *config.Config, configPath string, orch *orchestrator.Orchest
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/search/preview", s.handleSearchPreview)
 	mux.HandleFunc("/api/artists", s.handleArtists)
+	mux.HandleFunc("/api/artists/download-all", s.handleDownloadAllArtists)
 	mux.HandleFunc("/api/artists/", s.handleArtistDetail)
 	mux.HandleFunc("/api/albums", s.handleAlbums)
 	mux.HandleFunc("/api/albums/", s.handleAlbumActions)
@@ -467,6 +468,11 @@ func (s *Server) handleArtistDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if artistID == "download-all" {
+		s.handleDownloadAllArtists(w, r)
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "download-all" && r.Method == http.MethodPost {
 		fmt.Printf("[findr Server] Starting discography download for artist ID %s...\n", artistID)
 		go func() {
@@ -537,6 +543,47 @@ func (s *Server) handleArtistDetail(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleDownloadAllArtists(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ReleaseTypes []string `json:"release_types"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	// Quick reconcile with library disk so already downloaded files are marked completed
+	if r.URL.Query().Get("rescan") != "false" {
+		_, _ = s.orch.ImportArtistsFromLibrary(r.Context(), nil)
+	}
+
+	var rTypes []domain.ReleaseType
+	for _, rt := range req.ReleaseTypes {
+		rTypes = append(rTypes, domain.ReleaseType(rt))
+	}
+
+	totalArtists, enqueued, err := s.orch.EnqueueAllMissingReleases(r.Context(), rTypes)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   err.Error(),
+			"message": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":         "ok",
+		"total_artists":  totalArtists,
+		"enqueued_count": enqueued,
+		"message":        fmt.Sprintf("Enqueued %d missing releases across %d monitored artists", enqueued, totalArtists),
+	})
 }
 
 func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
@@ -2653,6 +2700,10 @@ const dashboardHTML = `<!DOCTYPE html>
             <span style="color: var(--p-muted); font-size: 13.5px; font-family: var(--font-mono);" id="artistCountSummary">Loading...</span>
           </div>
           <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary btn-sm" id="btn_download_all_artists" onclick="downloadAllArtistsReleases()" title="Check all monitored artists and download all missing releases">
+              <svg class="icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download All Missing
+            </button>
             <button class="btn btn-secondary btn-sm" id="btn_scan_library" onclick="scanLibraryArtists()" title="Automatically scan and import existing artists and albums from library">
               <svg class="icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Import From Library
@@ -3478,6 +3529,33 @@ const dashboardHTML = `<!DOCTYPE html>
   function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
   // --- VIEW 1: Library ---
+  async function downloadAllArtistsReleases() {
+    if (!confirm('Check all monitored artists and queue all missing releases for download?')) {
+      return;
+    }
+    const btn = document.getElementById('btn_download_all_artists');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<svg class="icon spin" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Checking & Queuing...';
+    }
+    showToast('Checking all artists for missing releases...', 'info');
+    try {
+      const res = await fetch('/api/artists/download-all', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to queue downloads');
+      showToast(data.message || 'Queued downloads for all artists', 'success');
+      await loadLibraryArtists();
+      if (typeof updateQueueCount === 'function') updateQueueCount();
+    } catch (err) {
+      showToast('Download All failed: ' + err.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download All Missing';
+      }
+    }
+  }
+
   async function scanLibraryArtists() {
     const btn = document.getElementById('btn_scan_library');
     if (btn) {

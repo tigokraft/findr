@@ -137,6 +137,8 @@ func main() {
 		handleListAlbums(ctx, repo, idx)
 	case "download":
 		handleDownload(ctx, orch)
+	case "download-all":
+		handleDownloadAll(ctx, orch)
 	case "scan":
 		handleScan(ctx, navi)
 	case "import-library", "scan-library":
@@ -166,6 +168,7 @@ Commands:
   albums <artist-id>      List all indexed albums and releases for an artist
   artists                 List all monitored artists in your local database
   download <album-id>     Execute pipeline: download -> verify -> import -> navidrome scan
+  download-all            Check all monitored artists and download all missing releases
   import-library          Scan music directory to automatically import all artists & albums
   scan                    Trigger a library scan on your Navidrome server
   version                 Print findr version
@@ -407,4 +410,19 @@ func handleImportLibrary(ctx context.Context, orch *orchestrator.Orchestrator) {
 			fmt.Printf("  - %s\n", e)
 		}
 	}
+}
+
+func handleDownloadAll(ctx context.Context, orch *orchestrator.Orchestrator) {
+	fmt.Println("Checking all artists and reconciling library...")
+	_, _ = orch.ImportArtistsFromLibrary(ctx, nil)
+
+	fmt.Println("Enqueuing all missing releases for download...")
+	totalArtists, count, err := orch.EnqueueAllMissingReleases(ctx, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Download-all failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nSUCCESS: Enqueued %d missing releases across %d monitored artists into download queue!\n",
+		count, totalArtists)
 }
