@@ -1,0 +1,61 @@
+# findr Configuration File
+server:
+  host: "0.0.0.0"
+  port: 8686
+
+library:
+  # Destination directory where organized music is stored
+  music_path: "./music"
+  # Temporary folder where in-flight downloads are staged before verification
+  download_path: "./downloads"
+  # Target folder naming template
+  folder_format: "{Artist}/{Album} ({Year})"
+  # Target audio file naming template
+  file_format: "{Track:02d} - {Title}"
+
+indexer:
+  # Default metadata provider: "deezer" (zero auth required), "qobuz", or "spotify"
+  default_provider: "deezer"
+  spotify:
+    client_id: ""
+    client_secret: ""
+  qobuz:
+    app_id: "305874112"
+    app_secret: ""
+
+downloader:
+  # Preferred downloader engine: "qobuz" or "slskd"
+  preferred: "qobuz"
+  qobuz:
+    enabled: true
+    username: ""
+    password: ""
+    app_id: "305874112"
+    app_secret: ""
+    # Target audio quality: "flac_24_96", "flac_16_44" (CD Lossless), or "mp3_320"
+    target_quality: "flac_16_44"
+  slskd:
+    enabled: false
+    url: "http://localhost:5030"
+    api_key: ""
+    download_dir: "/downloads/slskd"
+
+verifier:
+  # Maximum allowed duration discrepancy (in seconds) between indexer track and audio file
+  duration_tolerance_sec: 4
+  # Minimum confidence score (0.0 - 1.0) required to approve import
+  min_confidence_score: 0.85
+  # Set true to allow importing albums where some bonus/deluxe tracks were not found
+  allow_partial_match: false
+
+navidrome:
+  # Trigger automatic library rescan upon verified import
+  enabled: false
+  url: "http://localhost:4533"
+  username: "admin"
+  password: "your_navidrome_password"
+  # Use secure MD5 salt + token authentication (recommended by Subsonic API)
+  token_auth: true
+
+database:
+  path: "findr.db"

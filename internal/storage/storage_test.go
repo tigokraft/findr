@@ -1,0 +1,100 @@
+package storage
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/findr-app/findr/internal/domain"
+)
+
+func TestSQLiteRepository(t *testing.T) {
+	tmpDB := "/tmp/findr_test.db"
+	_ = os.Remove(tmpDB)
+	defer os.Remove(tmpDB)
+
+	repo, err := NewSQLiteRepository(tmpDB)
+	if err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer repo.Close()
+
+	ctx := context.Background()
+
+	// 1. Test Artist persistence
+	artist := &domain.Artist{
+		ID:        "art-1",
+		Name:      "Justice",
+		Source:    "deezer",
+		SourceID:  "123",
+		Monitored: true,
+	}
+
+	if err := repo.SaveArtist(ctx, artist); err != nil {
+		t.Fatalf("failed to save artist: %v", err)
+	}
+
+	fetchedArtist, err := repo.GetArtist(ctx, "art-1")
+	if err != nil || fetchedArtist == nil {
+		t.Fatalf("failed to get artist: %v", err)
+	}
+	if fetchedArtist.Name != "Justice" || !fetchedArtist.Monitored {
+		t.Errorf("artist mismatch: %+v", fetchedArtist)
+	}
+
+	// 2. Test Album persistence
+	album := &domain.Album{
+		ID:          "alb-1",
+		ArtistID:    "art-1",
+		ArtistName:  "Justice",
+		Title:       "Cross",
+		ReleaseType: domain.ReleaseTypeAlbum,
+		Year:        2007,
+		TotalTracks: 2,
+		Source:      "deezer",
+		SourceID:    "456",
+		Monitored:   true,
+		Status:      domain.StatusPending,
+		Tracks: []domain.Track{
+			{ID: "t-1", DiscNumber: 1, TrackNumber: 1, Title: "Genesis", DurationSec: 234},
+			{ID: "t-2", DiscNumber: 1, TrackNumber: 2, Title: "Let There Be Light", DurationSec: 295},
+		},
+	}
+
+	if err := repo.SaveAlbum(ctx, album); err != nil {
+		t.Fatalf("failed to save album: %v", err)
+	}
+
+	fetchedAlbum, err := repo.GetAlbum(ctx, "alb-1")
+	if err != nil || fetchedAlbum == nil {
+		t.Fatalf("failed to get album: %v", err)
+	}
+	if fetchedAlbum.Title != "Cross" || len(fetchedAlbum.Tracks) != 2 {
+		t.Errorf("album mismatch: %+v", fetchedAlbum)
+	}
+
+	// 3. Test DownloadJob persistence
+	job := &domain.DownloadJob{
+		ID:            "job-1",
+		AlbumID:       "alb-1",
+		Downloader:    "qobuz",
+		DownloadDir:   "/tmp/downloads",
+		TargetQuality: domain.QualityFLAC16,
+		Status:        domain.StatusDownloading,
+		Progress:      45.0,
+		CreatedAt:     time.Now(),
+	}
+
+	if err := repo.SaveDownloadJob(ctx, job); err != nil {
+		t.Fatalf("failed to save job: %v", err)
+	}
+
+	fetchedJob, err := repo.GetDownloadJob(ctx, "job-1")
+	if err != nil || fetchedJob == nil {
+		t.Fatalf("failed to get job: %v", err)
+	}
+	if fetchedJob.Progress != 45.0 || fetchedJob.Status != domain.StatusDownloading {
+		t.Errorf("job mismatch: %+v", fetchedJob)
+	}
+}

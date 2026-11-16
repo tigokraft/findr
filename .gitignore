@@ -1,0 +1,21 @@
+# Binaries
+bin/
+/findr
+
+# Database and runtime
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Library and Downloads
+music/
+downloads/
+temp/
+
+# Configuration with credentials
+config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
