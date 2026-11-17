@@ -378,10 +378,17 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		_ = o.repo.SaveAlbum(ctx, album)
 		_ = o.repo.SaveDownloadJob(ctx, downloadJob)
 		fmt.Printf("[findr Error] Download failed for '%s - %s': %v\n", album.ArtistName, album.Title, err)
+		// Clean up staging directory if it was left empty
+		if entries, readErr := os.ReadDir(stagingDir); readErr == nil && len(entries) == 0 {
+			_ = os.Remove(stagingDir)
+		}
 		return nil, nil, fmt.Errorf("download failed: %w", err)
 	}
 	if dlResult != nil {
 		downloadJob.DownloadedFiles = dlResult.DownloadedFiles
+		if dlResult.Downloader != "" {
+			downloadJob.Downloader = dlResult.Downloader
+		}
 	}
 	_ = o.repo.SaveDownloadJob(ctx, downloadJob)
 

@@ -35,3 +35,9 @@ type Downloader interface {
 	// Download fetches the release into targetDir.
 	Download(ctx context.Context, album *domain.Album, targetDir string, progress ProgressFunc) (*domain.DownloadJob, error)
 }
+
+// TrackDownloader is implemented by downloaders capable of downloading individual tracks.
+type TrackDownloader interface {
+	DownloadTrack(ctx context.Context, artist string, track domain.Track, destPath string, progress ProgressFunc) (string, error)
+}
+

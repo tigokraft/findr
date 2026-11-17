@@ -60,17 +60,10 @@ func main() {
 		idx = deezer.NewClient()
 	}
 
-	// Initialize Downloader
-	var dl downloader.Downloader
-	switch cfg.Downloader.Preferred {
-	case "slskd":
-		dl = slskddl.NewDownloader(slskddl.Config{
-			URL:         cfg.Downloader.Slskd.URL,
-			APIKey:      cfg.Downloader.Slskd.APIKey,
-			DownloadDir: cfg.Downloader.Slskd.DownloadDir,
-		})
-	default:
-		dl = qobuzdl.NewDownloader(qobuzdl.Config{
+	// Initialize Downloaders
+	var qobuzDownloader *qobuzdl.Downloader
+	if cfg.Downloader.Qobuz.Enabled || cfg.Downloader.Qobuz.UserToken != "" {
+		qobuzDownloader = qobuzdl.NewDownloader(qobuzdl.Config{
 			AppID:         cfg.Downloader.Qobuz.AppID,
 			AppSecret:     cfg.Downloader.Qobuz.AppSecret,
 			Username:      cfg.Downloader.Qobuz.Username,
@@ -78,6 +71,39 @@ func main() {
 			UserToken:     cfg.Downloader.Qobuz.UserToken,
 			TargetQuality: domain.AudioQuality(cfg.Downloader.Qobuz.TargetQuality),
 		})
+	}
+
+	var slskdDownloader *slskddl.Downloader
+	if cfg.Downloader.Slskd.Enabled || cfg.Downloader.Slskd.URL != "" {
+		slskdDownloader = slskddl.NewDownloader(slskddl.Config{
+			URL:         cfg.Downloader.Slskd.URL,
+			APIKey:      cfg.Downloader.Slskd.APIKey,
+			DownloadDir: cfg.Downloader.Slskd.DownloadDir,
+		})
+	}
+
+	// Link slskd as track fallback for qobuz when a track is missing or fails
+	if qobuzDownloader != nil && slskdDownloader != nil {
+		qobuzDownloader.SetTrackFallback(slskdDownloader)
+	}
+
+	var dl downloader.Downloader
+	if cfg.Downloader.Preferred == "slskd" {
+		if slskdDownloader != nil && qobuzDownloader != nil {
+			dl = downloader.NewFallbackDownloader(slskdDownloader, qobuzDownloader)
+		} else if slskdDownloader != nil {
+			dl = slskdDownloader
+		} else {
+			dl = qobuzDownloader
+		}
+	} else {
+		if qobuzDownloader != nil && slskdDownloader != nil {
+			dl = downloader.NewFallbackDownloader(qobuzDownloader, slskdDownloader)
+		} else if qobuzDownloader != nil {
+			dl = qobuzDownloader
+		} else {
+			dl = slskdDownloader
+		}
 	}
 
 	// Initialize Verifier & Importer

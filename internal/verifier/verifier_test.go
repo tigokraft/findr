@@ -18,6 +18,9 @@ func TestStringSimilarity(t *testing.T) {
 		{"01 - Around the World", "Around the World", 0.80},
 		{"Harder, Better, Faster, Stronger", "Harder Better Faster Stronger", 0.95},
 		{"Completely Different Track", "One More Time", 0.0},
+		{"?", "_", 1.0},
+		{"+", "+", 1.0},
+		{"$$$", "$$$", 1.0},
 	}
 
 	for _, tt := range tests {
@@ -39,6 +42,9 @@ func TestParseFilename(t *testing.T) {
 		{"1-03 - Aerodynamic", 1, 3, "Aerodynamic"},
 		{"2-05 - Voyager", 2, 5, "Voyager"},
 		{"04 Digital Love", 1, 4, "Digital Love"},
+		{"CD 1 - 02 - Superheroes", 1, 2, "Superheroes"},
+		{"Disc 2 - 05 - High Life", 2, 5, "High Life"},
+		{"07 - _", 1, 7, "_"},
 	}
 
 	for _, tt := range tests {
@@ -88,6 +94,42 @@ func TestVerifyAlbumSuccess(t *testing.T) {
 	}
 	if result.ConfidenceScore < 0.90 {
 		t.Errorf("expected confidence >= 0.90, got %.2f", result.ConfidenceScore)
+	}
+}
+
+func TestVerifyAlbumSymbolTrack(t *testing.T) {
+	v := NewVerifier(Config{
+		DurationToleranceSec: 4,
+		MinConfidenceScore:   0.85,
+		AllowPartialMatch:    false,
+	})
+
+	album := &domain.Album{
+		ID:          "doom-best-of",
+		ArtistName:  "MF DOOM",
+		Title:       "Best of Mf",
+		TotalTracks: 2,
+		Tracks: []domain.Track{
+			{ID: "t1", DiscNumber: 1, TrackNumber: 1, Title: "Foolish", DurationSec: 120},
+			{ID: "t2", DiscNumber: 1, TrackNumber: 2, Title: "?", DurationSec: 180},
+		},
+	}
+
+	candidates := []domain.CandidateFile{
+		{Path: "/tmp/01 - Foolish.flac", Filename: "01 - Foolish.flac", TrackNumber: 1, DiscNumber: 1, Title: "Foolish", DurationSec: 120},
+		{Path: "/tmp/02 - _.flac", Filename: "02 - _.flac", TrackNumber: 2, DiscNumber: 1, Title: "_", DurationSec: 180},
+	}
+
+	result, err := v.VerifyAlbum(context.Background(), album, candidates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("expected verification to pass for symbol track '?', failed with reason: %s", result.Reason)
+	}
+	if len(result.MatchedTracks) != 2 {
+		t.Errorf("expected 2 matched tracks, got %d", len(result.MatchedTracks))
 	}
 }
 

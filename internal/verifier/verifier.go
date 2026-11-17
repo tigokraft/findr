@@ -16,9 +16,10 @@ import (
 
 var (
 	// Regex patterns for extracting track numbers and discs from filenames
-	trackWithDiscRegex = regexp.MustCompile(`^(\d{1,2})[-_.](\d{1,3})[\s._-]+(.+)$`) // "1-02 Track Name" or "1.02 Track"
-	trackSimpleRegex   = regexp.MustCompile(`^(\d{1,3})[\s._-]+(.+)$`)             // "02 - Track Name" or "02 Track Name"
-	validAudioExts     = map[string]bool{
+	trackWithDiscPrefixRegex = regexp.MustCompile(`(?i)^(?:cd|disc|disk)\s*(\d{1,2})[\s/\\_.-]+(\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`) // "CD 1 - 02 Track"
+	trackWithDiscRegex       = regexp.MustCompile(`^(\d{1,2})[-_.](\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`)                              // "1-02 Track Name" or "1.02 Track"
+	trackSimpleRegex         = regexp.MustCompile(`^(\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`)                                          // "02 - Track Name" or "02 Track Name"
+	validAudioExts           = map[string]bool{
 		".flac": true,
 		".mp3":  true,
 		".m4a":  true,
@@ -208,6 +209,15 @@ func (v *Verifier) scoreMatch(expected domain.Track, cand domain.CandidateFile) 
 		titleToCompare = cand.Filename
 	}
 	sim := StringSimilarity(expected.Title, titleToCompare)
+
+	// Special handling for symbol-only titles (e.g. "?" by MF DOOM, "+" by Sam The Kid, "$$$")
+	if cand.TrackNumber > 0 && cand.TrackNumber == expected.TrackNumber {
+		nExp := normalizeString(expected.Title)
+		nCand := normalizeString(titleToCompare)
+		if nExp == "" && (nCand == "" || titleToCompare == "_" || titleToCompare == expected.Title) {
+			sim = 1.0
+		}
+	}
 	score += 0.40 * sim
 
 	// 3. Duration Matching (0.20 weight)
@@ -220,8 +230,8 @@ func (v *Verifier) scoreMatch(expected domain.Track, cand domain.CandidateFile) 
 			score += 0.10
 		}
 	} else {
-		// If duration is unknown, distribute a neutral partial credit if title & track matched
-		if sim > 0.8 && cand.TrackNumber == expected.TrackNumber {
+		// If duration is unknown, distribute neutral partial credit if title is a strong match or track matches
+		if sim >= 0.85 || (sim >= 0.70 && cand.TrackNumber == expected.TrackNumber) {
 			score += 0.15
 		}
 	}
@@ -235,6 +245,14 @@ func (v *Verifier) scoreMatch(expected domain.Track, cand domain.CandidateFile) 
 // parseFilename attempts to extract track number, disc, and title from a clean filename.
 func parseFilename(name string) (disc int, trackNum int, title string) {
 	name = strings.TrimSpace(name)
+
+	// Check for "CD 1 - 02 Title" or "Disc 1 - 02 Title"
+	if matches := trackWithDiscPrefixRegex.FindStringSubmatch(name); len(matches) == 4 {
+		disc, _ = strconv.Atoi(matches[1])
+		trackNum, _ = strconv.Atoi(matches[2])
+		title = strings.TrimSpace(matches[3])
+		return
+	}
 
 	// Check for "Disc-Track Title", e.g. "1-02 Around the World"
 	if matches := trackWithDiscRegex.FindStringSubmatch(name); len(matches) == 4 {
@@ -255,12 +273,40 @@ func parseFilename(name string) (disc int, trackNum int, title string) {
 	return 1, 0, name
 }
 
+func sanitizeFilename(name string) string {
+	invalidChars := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
+	res := name
+	for _, c := range invalidChars {
+		res = strings.ReplaceAll(res, c, "_")
+	}
+	return strings.TrimSpace(res)
+}
+
 // StringSimilarity calculates normalized string similarity between 0.0 and 1.0.
 func StringSimilarity(s1, s2 string) float64 {
+	t1 := strings.TrimSpace(s1)
+	t2 := strings.TrimSpace(s2)
+
+	if strings.EqualFold(t1, t2) {
+		return 1.0
+	}
+	if sanitizeFilename(t1) == t2 || sanitizeFilename(t2) == t1 || strings.EqualFold(sanitizeFilename(t1), t2) {
+		return 1.0
+	}
+
 	n1 := normalizeString(s1)
 	n2 := normalizeString(s2)
 
 	if n1 == "" || n2 == "" {
+		// If both are punctuation/symbols only (e.g. "?", "+", "$$$")
+		if n1 == "" && n2 == "" && t1 != "" && t2 != "" {
+			if strings.EqualFold(t1, t2) || sanitizeFilename(t1) == t2 || sanitizeFilename(t2) == t1 {
+				return 1.0
+			}
+			if t1 == "_" || t2 == "_" {
+				return 1.0
+			}
+		}
 		return 0.0
 	}
 	if n1 == n2 {

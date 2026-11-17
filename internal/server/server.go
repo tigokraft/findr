@@ -195,17 +195,10 @@ func (s *Server) reloadComponents(newCfg *config.Config) error {
 		idx = deezer.NewClient()
 	}
 
-	// 2. Recreate downloader
-	var dl downloader.Downloader
-	switch newCfg.Downloader.Preferred {
-	case "slskd":
-		dl = slskddl.NewDownloader(slskddl.Config{
-			URL:         newCfg.Downloader.Slskd.URL,
-			APIKey:      newCfg.Downloader.Slskd.APIKey,
-			DownloadDir: newCfg.Downloader.Slskd.DownloadDir,
-		})
-	default:
-		dl = qobuzdl.NewDownloader(qobuzdl.Config{
+	// 2. Recreate downloaders with fallback cascade
+	var qobuzDownloader *qobuzdl.Downloader
+	if newCfg.Downloader.Qobuz.Enabled || newCfg.Downloader.Qobuz.UserToken != "" {
+		qobuzDownloader = qobuzdl.NewDownloader(qobuzdl.Config{
 			AppID:         newCfg.Downloader.Qobuz.AppID,
 			AppSecret:     newCfg.Downloader.Qobuz.AppSecret,
 			Username:      newCfg.Downloader.Qobuz.Username,
@@ -213,6 +206,39 @@ func (s *Server) reloadComponents(newCfg *config.Config) error {
 			UserToken:     newCfg.Downloader.Qobuz.UserToken,
 			TargetQuality: domain.AudioQuality(newCfg.Downloader.Qobuz.TargetQuality),
 		})
+	}
+
+	var slskdDownloader *slskddl.Downloader
+	if newCfg.Downloader.Slskd.Enabled || newCfg.Downloader.Slskd.URL != "" {
+		slskdDownloader = slskddl.NewDownloader(slskddl.Config{
+			URL:         newCfg.Downloader.Slskd.URL,
+			APIKey:      newCfg.Downloader.Slskd.APIKey,
+			DownloadDir: newCfg.Downloader.Slskd.DownloadDir,
+		})
+	}
+
+	// Link slskd as track fallback for qobuz when a track is missing or unstreamable
+	if qobuzDownloader != nil && slskdDownloader != nil {
+		qobuzDownloader.SetTrackFallback(slskdDownloader)
+	}
+
+	var dl downloader.Downloader
+	if newCfg.Downloader.Preferred == "slskd" {
+		if slskdDownloader != nil && qobuzDownloader != nil {
+			dl = downloader.NewFallbackDownloader(slskdDownloader, qobuzDownloader)
+		} else if slskdDownloader != nil {
+			dl = slskdDownloader
+		} else {
+			dl = qobuzDownloader
+		}
+	} else {
+		if qobuzDownloader != nil && slskdDownloader != nil {
+			dl = downloader.NewFallbackDownloader(qobuzDownloader, slskdDownloader)
+		} else if qobuzDownloader != nil {
+			dl = qobuzDownloader
+		} else {
+			dl = slskdDownloader
+		}
 	}
 
 	// 3. Recreate verifier

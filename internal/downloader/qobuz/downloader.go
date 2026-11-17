@@ -27,14 +27,16 @@ const (
 
 // Downloader handles downloading music directly from Qobuz in lossless FLAC or Hi-Res.
 type Downloader struct {
-	appID         string
-	appSecret     string
-	username      string
-	password      string
-	userToken     string
-	targetQuality domain.AudioQuality
-	httpClient    *http.Client
-	mu            sync.Mutex
+	appID            string
+	appSecret        string
+	username         string
+	password         string
+	userToken        string
+	targetQuality    domain.AudioQuality
+	httpClient       *http.Client
+	streamHttpClient *http.Client
+	trackFallback    downloader.TrackDownloader
+	mu               sync.Mutex
 }
 
 // Config holds credentials and parameters for Qobuz.
@@ -74,9 +76,23 @@ func NewDownloader(cfg Config) *Downloader {
 		userToken:     cfg.UserToken,
 		targetQuality: quality,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 30 * time.Second,
+		},
+		streamHttpClient: &http.Client{
+			Transport: &http.Transport{
+				ResponseHeaderTimeout: 30 * time.Second,
+				TLSHandshakeTimeout:   15 * time.Second,
+				IdleConnTimeout:       90 * time.Second,
+			},
 		},
 	}
+}
+
+// SetTrackFallback registers a fallback downloader for individual tracks not found or streamable on Qobuz.
+func (d *Downloader) SetTrackFallback(fb downloader.TrackDownloader) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.trackFallback = fb
 }
 
 // UserInfo contains details about the authenticated Qobuz user and subscription.
@@ -376,30 +392,16 @@ func (d *Downloader) resolveQobuzTracks(ctx context.Context, album *domain.Album
 
 // Download downloads all tracks of the specified album into targetDir.
 func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDir string, progress downloader.ProgressFunc) (*domain.DownloadJob, error) {
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return nil, fmt.Errorf("create target dir: %w", err)
-	}
-
 	if err := d.Authenticate(ctx); err != nil {
 		return nil, fmt.Errorf("authenticate qobuz: %w", err)
 	}
 
-	job := &domain.DownloadJob{
-		ID:            fmt.Sprintf("qobuz-%s-%d", album.ID, time.Now().Unix()),
-		AlbumID:       album.ID,
-		Downloader:    "qobuz",
-		DownloadDir:   targetDir,
-		TargetQuality: d.targetQuality,
-		Status:        domain.StatusDownloading,
-		Progress:      0.0,
-		CreatedAt:     time.Now(),
-	}
-
-	formatID := d.mapQualityToFormatID(d.targetQuality)
 	totalTracks := len(album.Tracks)
 	if totalTracks == 0 {
 		return nil, fmt.Errorf("album has no tracks defined")
 	}
+
+	formatID := d.mapQualityToFormatID(d.targetQuality)
 
 	fmt.Printf("[Qobuz Downloader] Preparing download for '%s - %s' (Source: %s, Tracks: %d)\n",
 		album.ArtistName, album.Title, album.Source, totalTracks)
@@ -416,6 +418,25 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 		qobuzMatch = resolved
 		fmt.Printf("[Qobuz Downloader] Successfully matched %d tracks on Qobuz\n", len(qobuzMatch.tracks))
 	}
+
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, fmt.Errorf("create target dir: %w", err)
+	}
+
+	job := &domain.DownloadJob{
+		ID:            fmt.Sprintf("qobuz-%s-%d", album.ID, time.Now().Unix()),
+		AlbumID:       album.ID,
+		Downloader:    "qobuz",
+		DownloadDir:   targetDir,
+		TargetQuality: d.targetQuality,
+		Status:        domain.StatusDownloading,
+		Progress:      0.0,
+		CreatedAt:     time.Now(),
+	}
+
+	d.mu.Lock()
+	trackFB := d.trackFallback
+	d.mu.Unlock()
 
 	var downloadedFiles []string
 	for i, trk := range album.Tracks {
@@ -450,28 +471,67 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 		}
 
 		trackID := trk.SourceID
+		trackMatched := false
 		if qobuzMatch != nil {
 			if qID, ok := qobuzMatch.trackByNum[trackNum]; ok && qID != "" {
 				trackID = qID
+				trackMatched = true
 			} else if qID, ok := qobuzMatch.trackByNum[i+1]; ok && qID != "" {
 				trackID = qID
+				trackMatched = true
 			} else if qID, ok := qobuzMatch.trackByTitle[strings.ToLower(strings.TrimSpace(trk.Title))]; ok && qID != "" {
 				trackID = qID
+				trackMatched = true
 			} else if i < len(qobuzMatch.tracks) {
 				trackID = qobuzMatch.tracks[i]
-			} else {
-				return nil, fmt.Errorf("track %d '%s' not found on Qobuz album", trackNum, trk.Title)
+				trackMatched = true
 			}
+		} else {
+			trackMatched = trackID != ""
+		}
+
+		if !trackMatched {
+			if trackFB != nil {
+				fmt.Printf("[Qobuz Downloader] Track %d '%s' not found on Qobuz album. Attempting slskd fallback...\n", trackNum, trk.Title)
+				actualPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
+				if fbErr == nil && actualPath != "" {
+					fmt.Printf("[Qobuz Downloader] Successfully downloaded track %d '%s' via slskd fallback\n", trackNum, trk.Title)
+					downloadedFiles = append(downloadedFiles, actualPath)
+					continue
+				}
+				fmt.Printf("[Qobuz Downloader] slskd fallback failed for track '%s': %v\n", trk.Title, fbErr)
+			}
+			return nil, fmt.Errorf("track %d '%s' not found on Qobuz album", trackNum, trk.Title)
 		}
 
 		fmt.Printf("[Qobuz Downloader] Downloading track [%d/%d] (Qobuz Track ID: %s): %s\n", i+1, totalTracks, trackID, trk.Title)
 
 		fileURL, err := d.getTrackFileURL(ctx, trackID, formatID)
 		if err != nil {
+			if trackFB != nil {
+				fmt.Printf("[Qobuz Downloader] No stream URL for track %d '%s' on Qobuz (%v). Attempting slskd fallback...\n", trackNum, trk.Title, err)
+				actualPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
+				if fbErr == nil && actualPath != "" {
+					fmt.Printf("[Qobuz Downloader] Successfully downloaded track %d '%s' via slskd fallback\n", trackNum, trk.Title)
+					downloadedFiles = append(downloadedFiles, actualPath)
+					continue
+				}
+				fmt.Printf("[Qobuz Downloader] slskd fallback failed for track '%s': %v\n", trk.Title, fbErr)
+			}
 			return nil, fmt.Errorf("get file url for track %d '%s' (qobuz_id=%s): %w", trackNum, trk.Title, trackID, err)
 		}
 
-		if err := d.downloadToFile(ctx, fileURL, destPath); err != nil {
+		if err := d.downloadToFileWithRetry(ctx, fileURL, destPath, trackID, formatID); err != nil {
+			if trackFB != nil {
+				fmt.Printf("[Qobuz Downloader] Qobuz download failed for track %d '%s' (%v). Attempting slskd fallback...\n", trackNum, trk.Title, err)
+				actualPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
+				if fbErr == nil && actualPath != "" {
+					fmt.Printf("[Qobuz Downloader] Successfully downloaded track %d '%s' via slskd fallback\n", trackNum, trk.Title)
+					downloadedFiles = append(downloadedFiles, actualPath)
+					continue
+				}
+				fmt.Printf("[Qobuz Downloader] slskd fallback failed for track '%s': %v\n", trk.Title, fbErr)
+			}
 			return nil, fmt.Errorf("download track %s to %s: %w", trk.Title, destPath, err)
 		}
 
@@ -578,13 +638,46 @@ func (d *Downloader) getTrackFileURL(ctx context.Context, trackID string, format
 	return fileResp.URL, nil
 }
 
+func (d *Downloader) downloadToFileWithRetry(ctx context.Context, mediaURL, destPath, trackID string, formatID int) error {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * 1500 * time.Millisecond)
+			if freshURL, err := d.getTrackFileURL(ctx, trackID, formatID); err == nil && freshURL != "" {
+				mediaURL = freshURL
+			}
+		}
+
+		err := d.downloadToFile(ctx, mediaURL, destPath)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		fmt.Printf("[Qobuz Downloader] Download attempt %d/3 failed for track %s: %v. Retrying...\n", attempt, trackID, err)
+		_ = os.Remove(destPath)
+	}
+	return lastErr
+}
+
 func (d *Downloader) downloadToFile(ctx context.Context, mediaURL, destPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
 	if err != nil {
 		return err
 	}
 
-	resp, err := d.httpClient.Do(req)
+	client := d.streamHttpClient
+	if client == nil {
+		client = d.httpClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

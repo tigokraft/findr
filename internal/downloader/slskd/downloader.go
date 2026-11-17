@@ -466,6 +466,211 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 	return job, nil
 }
 
+// DownloadTrack searches Soulseek for an individual track and downloads it to destPath.
+// Returns the actual path on disk where the file was saved.
+func (d *Downloader) DownloadTrack(ctx context.Context, artist string, track domain.Track, destPath string, progress downloader.ProgressFunc) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return "", fmt.Errorf("create destination directory: %w", err)
+	}
+
+	searchQuery := fmt.Sprintf("%s %s", artist, track.Title)
+	if progress != nil {
+		progress(5.0, fmt.Sprintf("Searching Soulseek for track: %s - %s...", artist, track.Title))
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"searchText": searchQuery,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v0/searches", d.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if d.apiKey != "" {
+		req.Header.Set("X-API-Key", d.apiKey)
+	}
+
+	resp, err := d.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("dispatch slskd track search: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("slskd track search returned status %d", resp.StatusCode)
+	}
+
+	var searchInit struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&searchInit); err != nil {
+		return "", fmt.Errorf("decode track search response: %w", err)
+	}
+
+	searchID := searchInit.ID
+	defer d.deleteSearch(context.Background(), searchID)
+
+	// Poll for search responses
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	timeout := time.After(12 * time.Second)
+
+	type TrackCandidate struct {
+		Username string
+		File     SlskdResponseFile
+		Score    int
+	}
+
+	var bestCandidate *TrackCandidate
+	cleanTitle := strings.ToLower(strings.TrimSpace(track.Title))
+	cleanArtist := strings.ToLower(strings.TrimSpace(artist))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timeout:
+			goto SelectCandidate
+		case <-ticker.C:
+			respURL := fmt.Sprintf("%s/api/v0/searches/%s/responses", d.baseURL, searchID)
+			rReq, err := http.NewRequestWithContext(ctx, http.MethodGet, respURL, nil)
+			if err != nil {
+				continue
+			}
+			if d.apiKey != "" {
+				rReq.Header.Set("X-API-Key", d.apiKey)
+			}
+			rResp, err := d.httpClient.Do(rReq)
+			if err != nil {
+				continue
+			}
+
+			var userResponses []SlskdSearchResponse
+			_ = json.NewDecoder(rResp.Body).Decode(&userResponses)
+			rResp.Body.Close()
+
+			for _, u := range userResponses {
+				for _, f := range u.Files {
+					if f.IsLocked {
+						continue
+					}
+					norm := strings.ReplaceAll(f.Filename, "\\", "/")
+					ext := strings.ToLower(filepath.Ext(norm))
+					if !isAudioExtension(ext) {
+						continue
+					}
+
+					base := strings.ToLower(filepath.Base(norm))
+					lowerNorm := strings.ToLower(norm)
+
+					// File must match track title
+					if !strings.Contains(base, cleanTitle) && !strings.Contains(lowerNorm, cleanTitle) {
+						continue
+					}
+
+					score := 10
+					if ext == ".flac" {
+						score += 50
+					} else if ext == ".mp3" && f.BitRate >= 320 {
+						score += 30
+					} else if ext == ".mp3" {
+						score += 15
+					}
+
+					if u.HasFreeUploadSlot {
+						score += 25
+					}
+					if u.QueueLength == 0 {
+						score += 25
+					} else if u.QueueLength < 5 {
+						score += 10
+					}
+
+					if strings.Contains(lowerNorm, cleanArtist) {
+						score += 20
+					}
+
+					if bestCandidate == nil || score > bestCandidate.Score {
+						bestCandidate = &TrackCandidate{
+							Username: u.Username,
+							File:     f,
+							Score:    score,
+						}
+					}
+				}
+			}
+
+			// If we found a FLAC with free slot and queue=0, break early
+			if bestCandidate != nil && bestCandidate.Score >= 100 {
+				goto SelectCandidate
+			}
+		}
+	}
+
+SelectCandidate:
+	if bestCandidate == nil {
+		return "", fmt.Errorf("no matching track found on Soulseek network for '%s - %s'", artist, track.Title)
+	}
+
+	filePayload := []FilePayload{{
+		Filename: bestCandidate.File.Filename,
+		Size:     bestCandidate.File.Size,
+	}}
+
+	if progress != nil {
+		progress(20.0, fmt.Sprintf("Downloading track '%s' from Soulseek peer %s...", track.Title, bestCandidate.Username))
+	}
+
+	if err := d.enqueueFiles(ctx, bestCandidate.Username, filePayload); err != nil {
+		return "", fmt.Errorf("enqueue track download: %w", err)
+	}
+
+	if err := d.waitForDownload(ctx, bestCandidate.Username, filePayload, progress); err != nil {
+		return "", fmt.Errorf("download track from soulseek: %w", err)
+	}
+
+	// Locate downloaded file in slskd download directory
+	norm := strings.ReplaceAll(bestCandidate.File.Filename, "\\", "/")
+	baseName := filepath.Base(norm)
+
+	var foundPath string
+	_ = filepath.Walk(d.downloadDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && filepath.Base(path) == baseName {
+			foundPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+
+	if foundPath == "" {
+		return "", fmt.Errorf("downloaded track file '%s' not found on disk in %s", baseName, d.downloadDir)
+	}
+
+	actualExt := strings.ToLower(filepath.Ext(foundPath))
+	finalDestPath := destPath
+	if actualExt != "" && strings.ToLower(filepath.Ext(finalDestPath)) != actualExt {
+		finalDestPath = strings.TrimSuffix(finalDestPath, filepath.Ext(finalDestPath)) + actualExt
+	}
+
+	if err := os.Rename(foundPath, finalDestPath); err != nil {
+		if err := copyFile(foundPath, finalDestPath); err != nil {
+			return "", fmt.Errorf("move track file from %s to %s: %w", foundPath, finalDestPath, err)
+		}
+		_ = os.Remove(foundPath)
+	}
+
+	if progress != nil {
+		progress(100.0, fmt.Sprintf("Successfully downloaded track '%s' via Soulseek", track.Title))
+	}
+
+	return finalDestPath, nil
+}
+
 func (d *Downloader) enqueueFiles(ctx context.Context, username string, files []FilePayload) error {
 	payload, err := json.Marshal(files)
 	if err != nil {
