@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -96,5 +97,32 @@ func TestSQLiteRepository(t *testing.T) {
 	}
 	if fetchedJob.Progress != 45.0 || fetchedJob.Status != domain.StatusDownloading {
 		t.Errorf("job mismatch: %+v", fetchedJob)
+	}
+}
+
+func TestPlaylistRoundTrip(t *testing.T) {
+	repo, err := NewSQLiteRepository(filepath.Join(t.TempDir(), "pl.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	ctx := context.Background()
+	pl := &domain.Playlist{ID: "spotify-1", Source: "spotify", SourceID: "1", Name: "Mix", Monitored: true,
+		Tracks:           []domain.PlaylistTrack{{Position: 1, Title: "A", Artists: []string{"X"}, AlbumID: "alb"}},
+		ExcludedAlbumIDs: []string{"skip"}}
+	if err := repo.SavePlaylist(ctx, pl); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetPlaylist(ctx, "spotify-1")
+	if err != nil || got == nil || got.Name != "Mix" || len(got.Tracks) != 1 || got.Tracks[0].AlbumID != "alb" || got.ExcludedAlbumIDs[0] != "skip" || !got.Monitored {
+		t.Fatalf("round trip failed: %+v %v", got, err)
+	}
+	list, _ := repo.ListPlaylists(ctx)
+	if len(list) != 1 {
+		t.Fatalf("list: %d", len(list))
+	}
+	_ = repo.DeletePlaylist(ctx, "spotify-1")
+	if got, _ := repo.GetPlaylist(ctx, "spotify-1"); got != nil {
+		t.Fatal("not deleted")
 	}
 }

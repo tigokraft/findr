@@ -64,6 +64,12 @@ func NewServer(cfg *config.Config, configPath string, orch *orchestrator.Orchest
 	mux.HandleFunc("/api/disks", s.handleDisks)
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/search/preview", s.handleSearchPreview)
+	mux.HandleFunc("/api/search/albums", s.handleSearchAlbums)
+	mux.HandleFunc("/api/files", s.handleFiles)
+	mux.HandleFunc("/api/files/roots", s.handleFileRoots)
+	mux.HandleFunc("/api/files/raw", s.handleFileRaw)
+	mux.HandleFunc("/api/playlists", s.handlePlaylists)
+	mux.HandleFunc("/api/playlists/", s.handlePlaylistDetail)
 	mux.HandleFunc("/api/artists", s.handleArtists)
 	mux.HandleFunc("/api/artists/download-all", s.handleDownloadAllArtists)
 	mux.HandleFunc("/api/artists/", s.handleArtistDetail)
@@ -163,6 +169,7 @@ func (s *Server) runBackgroundScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.syncMonitoredArtists(ctx)
+			s.orch.SyncMonitoredPlaylists(ctx)
 		}
 	}
 }
@@ -450,12 +457,17 @@ func (s *Server) handleArtists(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("[findr Server] Starting background track and download for '%s'...\n", req.Query)
 			go func() {
 				bgCtx := context.Background()
-				artist, summary, err := s.orch.TrackAndDownloadArtist(bgCtx, req.Query, nil, nil)
+				artist, _, err := s.orch.SearchAndAddArtist(bgCtx, req.Query)
 				if err != nil {
 					fmt.Printf("[findr Server ERROR] Track & Download failed for '%s': %v\n", req.Query, err)
+					return
+				}
+				// Enqueue rather than download inline so releases use all configured download slots.
+				count, err := s.orch.EnqueueArtistReleases(bgCtx, artist.ID, nil)
+				if err != nil {
+					fmt.Printf("[findr Server ERROR] Enqueue releases for '%s' failed: %v\n", artist.Name, err)
 				} else {
-					fmt.Printf("[findr Server SUCCESS] Completed tracking '%s': %d downloaded, %d failed\n",
-						artist.Name, summary.Successful, summary.Failed)
+					fmt.Printf("[findr Server] Tracking '%s': enqueued %d releases\n", artist.Name, count)
 				}
 			}()
 			w.Header().Set("Content-Type", "application/json")
@@ -614,6 +626,10 @@ func (s *Server) handleDownloadAllArtists(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.handleAddAlbum(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -729,8 +745,21 @@ func (s *Server) handleAlbumActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "files" {
+		s.handleAlbumFiles(w, r, albumID)
+		return
+	}
+
 	ctx := r.Context()
 	switch r.Method {
+	case http.MethodDelete:
+		if err := s.orch.RemoveAlbum(ctx, albumID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Release removed from findr; files on disk were kept"})
+
 	case http.MethodGet:
 		album, err := s.orch.EnsureAlbumTracks(ctx, albumID)
 		if err != nil || album == nil {

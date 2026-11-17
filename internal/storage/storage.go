@@ -22,6 +22,12 @@ type Repository interface {
 	GetAlbum(ctx context.Context, id string) (*domain.Album, error)
 	ListAlbumsByArtist(ctx context.Context, artistID string) ([]domain.Album, error)
 	ListMonitoredAlbums(ctx context.Context) ([]domain.Album, error)
+	DeleteAlbum(ctx context.Context, id string) error
+
+	SavePlaylist(ctx context.Context, pl *domain.Playlist) error
+	GetPlaylist(ctx context.Context, id string) (*domain.Playlist, error)
+	ListPlaylists(ctx context.Context) ([]domain.Playlist, error)
+	DeletePlaylist(ctx context.Context, id string) error
 
 	SaveDownloadJob(ctx context.Context, job *domain.DownloadJob) error
 	GetDownloadJob(ctx context.Context, id string) (*domain.DownloadJob, error)
@@ -118,6 +124,23 @@ func (r *SQLiteRepository) migrate() error {
 		downloaded_files_json TEXT,
 		created_at DATETIME NOT NULL,
 		completed_at DATETIME
+	);
+
+	CREATE TABLE IF NOT EXISTS playlists (
+		id TEXT PRIMARY KEY,
+		source TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		url TEXT,
+		name TEXT NOT NULL,
+		owner TEXT,
+		image_url TEXT,
+		monitored INTEGER NOT NULL DEFAULT 1,
+		tracks_json TEXT,
+		excluded_json TEXT,
+		m3u_path TEXT,
+		last_synced_at DATETIME,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
 	);
 	`
 
@@ -329,6 +352,105 @@ func scanAlbums(rows *sql.Rows) ([]domain.Album, error) {
 		albums = append(albums, a)
 	}
 	return albums, nil
+}
+
+func (r *SQLiteRepository) DeleteAlbum(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM albums WHERE id = ?", id)
+	return err
+}
+
+func (r *SQLiteRepository) SavePlaylist(ctx context.Context, pl *domain.Playlist) error {
+	now := time.Now()
+	if pl.CreatedAt.IsZero() {
+		pl.CreatedAt = now
+	}
+	pl.UpdatedAt = now
+	tracksJSON, _ := json.Marshal(pl.Tracks)
+	excludedJSON, _ := json.Marshal(pl.ExcludedAlbumIDs)
+	monitoredInt := 0
+	if pl.Monitored {
+		monitoredInt = 1
+	}
+	query := `
+	INSERT INTO playlists (id, source, source_id, url, name, owner, image_url, monitored, tracks_json, excluded_json, m3u_path, last_synced_at, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		url = excluded.url,
+		name = excluded.name,
+		owner = excluded.owner,
+		image_url = excluded.image_url,
+		monitored = excluded.monitored,
+		tracks_json = excluded.tracks_json,
+		excluded_json = excluded.excluded_json,
+		m3u_path = excluded.m3u_path,
+		last_synced_at = excluded.last_synced_at,
+		updated_at = excluded.updated_at;
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		pl.ID, pl.Source, pl.SourceID, pl.URL, pl.Name, pl.Owner, pl.ImageURL, monitoredInt,
+		string(tracksJSON), string(excludedJSON), pl.M3UPath, pl.LastSyncedAt, pl.CreatedAt, pl.UpdatedAt,
+	)
+	return err
+}
+
+const playlistColumns = `id, source, source_id, url, name, owner, image_url, monitored, tracks_json, excluded_json, m3u_path, last_synced_at, created_at, updated_at`
+
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanPlaylist(row rowScanner) (*domain.Playlist, error) {
+	var pl domain.Playlist
+	var monitoredInt int
+	var url, owner, image, tracksJSON, excludedJSON, m3u sql.NullString
+	var synced sql.NullTime
+	if err := row.Scan(&pl.ID, &pl.Source, &pl.SourceID, &url, &pl.Name, &owner, &image, &monitoredInt,
+		&tracksJSON, &excludedJSON, &m3u, &synced, &pl.CreatedAt, &pl.UpdatedAt); err != nil {
+		return nil, err
+	}
+	pl.URL, pl.Owner, pl.ImageURL, pl.M3UPath = url.String, owner.String, image.String, m3u.String
+	pl.Monitored = monitoredInt == 1
+	if synced.Valid {
+		pl.LastSyncedAt = synced.Time
+	}
+	if tracksJSON.Valid && tracksJSON.String != "" {
+		_ = json.Unmarshal([]byte(tracksJSON.String), &pl.Tracks)
+	}
+	if excludedJSON.Valid && excludedJSON.String != "" {
+		_ = json.Unmarshal([]byte(excludedJSON.String), &pl.ExcludedAlbumIDs)
+	}
+	return &pl, nil
+}
+
+func (r *SQLiteRepository) GetPlaylist(ctx context.Context, id string) (*domain.Playlist, error) {
+	row := r.db.QueryRowContext(ctx, "SELECT "+playlistColumns+" FROM playlists WHERE id = ?", id)
+	pl, err := scanPlaylist(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return pl, err
+}
+
+func (r *SQLiteRepository) ListPlaylists(ctx context.Context) ([]domain.Playlist, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT "+playlistColumns+" FROM playlists ORDER BY name COLLATE NOCASE ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Playlist
+	for rows.Next() {
+		pl, err := scanPlaylist(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *pl)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) DeletePlaylist(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM playlists WHERE id = ?", id)
+	return err
 }
 
 func (r *SQLiteRepository) SaveDownloadJob(ctx context.Context, job *domain.DownloadJob) error {

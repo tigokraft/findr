@@ -66,15 +66,15 @@ type qobuzArtistGetResponse struct {
 }
 
 type qobuzAlbumItem struct {
-	ID                  string `json:"id"`
-	Title               string `json:"title"`
-	Version             string `json:"version"`
-	ReleaseDateOriginal string `json:"release_date_original"`
-	ReleaseDateDownload string `json:"release_date_download"`
-	MaximumBitDepth     int    `json:"maximum_bit_depth"`
+	ID                  string  `json:"id"`
+	Title               string  `json:"title"`
+	Version             string  `json:"version"`
+	ReleaseDateOriginal string  `json:"release_date_original"`
+	ReleaseDateDownload string  `json:"release_date_download"`
+	MaximumBitDepth     int     `json:"maximum_bit_depth"`
 	MaximumSamplingRate float64 `json:"maximum_sampling_rate"`
-	TracksCount         int    `json:"tracks_count"`
-	UPC                 string `json:"upc"`
+	TracksCount         int     `json:"tracks_count"`
+	UPC                 string  `json:"upc"`
 	Image               struct {
 		Small     string `json:"small"`
 		Thumbnail string `json:"thumbnail"`
@@ -90,13 +90,13 @@ type qobuzAlbumGetResponse struct {
 	qobuzAlbumItem
 	Tracks struct {
 		Items []struct {
-			ID          int64   `json:"id"`
-			Title       string  `json:"title"`
-			Version     string  `json:"version"`
-			Duration    int     `json:"duration"`
-			TrackNumber int     `json:"track_number"`
-			MediaNumber int     `json:"media_number"`
-			ISRC        string  `json:"isrc"`
+			ID          int64  `json:"id"`
+			Title       string `json:"title"`
+			Version     string `json:"version"`
+			Duration    int    `json:"duration"`
+			TrackNumber int    `json:"track_number"`
+			MediaNumber int    `json:"media_number"`
+			ISRC        string `json:"isrc"`
 			Performer   struct {
 				Name string `json:"name"`
 			} `json:"performer"`
@@ -328,4 +328,113 @@ func inferReleaseType(trackCount int) domain.ReleaseType {
 	default:
 		return domain.ReleaseTypeAlbum
 	}
+}
+
+func (c *Client) getJSON(ctx context.Context, path string, params url.Values, out interface{}) error {
+	params.Set("app_id", c.appID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path+"?"+params.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("qobuz request %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("qobuz %s returned status %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func albumFromItem(item qobuzAlbumItem) domain.Album {
+	relDate := item.ReleaseDateOriginal
+	if relDate == "" {
+		relDate = item.ReleaseDateDownload
+	}
+	year := 0
+	if len(relDate) >= 4 {
+		year, _ = strconv.Atoi(relDate[:4])
+	}
+	title := item.Title
+	if item.Version != "" && !strings.Contains(title, item.Version) {
+		title = fmt.Sprintf("%s (%s)", title, item.Version)
+	}
+	return domain.Album{
+		ID:          item.ID,
+		ArtistID:    strconv.FormatInt(item.Artist.ID, 10),
+		ArtistName:  item.Artist.Name,
+		Title:       title,
+		ReleaseType: inferReleaseType(item.TracksCount),
+		ReleaseDate: relDate,
+		Year:        year,
+		CoverURL:    item.Image.Large,
+		TotalTracks: item.TracksCount,
+		UPC:         item.UPC,
+		Source:      "qobuz",
+		SourceID:    item.ID,
+		Status:      domain.StatusPending,
+	}
+}
+
+// SearchAlbum searches the Qobuz catalog for releases.
+func (c *Client) SearchAlbum(ctx context.Context, query string) ([]domain.Album, error) {
+	var res struct {
+		Albums struct {
+			Items []qobuzAlbumItem `json:"items"`
+		} `json:"albums"`
+	}
+	if err := c.getJSON(ctx, "/album/search", url.Values{"query": {query}, "limit": {"40"}}, &res); err != nil {
+		return nil, err
+	}
+	albums := make([]domain.Album, 0, len(res.Albums.Items))
+	for _, item := range res.Albums.Items {
+		albums = append(albums, albumFromItem(item))
+	}
+	return albums, nil
+}
+
+// SearchTrack searches Qobuz tracks, returning each hit with its parent release.
+func (c *Client) SearchTrack(ctx context.Context, artist, title string) ([]indexer.TrackHit, error) {
+	var res struct {
+		Tracks struct {
+			Items []struct {
+				ID        int64  `json:"id"`
+				Title     string `json:"title"`
+				Version   string `json:"version"`
+				Duration  int    `json:"duration"`
+				ISRC      string `json:"isrc"`
+				Performer struct {
+					Name string `json:"name"`
+				} `json:"performer"`
+				Album qobuzAlbumItem `json:"album"`
+			} `json:"items"`
+		} `json:"tracks"`
+	}
+	q := strings.TrimSpace(artist + " " + title)
+	if err := c.getJSON(ctx, "/track/search", url.Values{"query": {q}, "limit": {"15"}}, &res); err != nil {
+		return nil, err
+	}
+	hits := make([]indexer.TrackHit, 0, len(res.Tracks.Items))
+	for _, t := range res.Tracks.Items {
+		name := t.Title
+		if t.Version != "" && !strings.Contains(name, t.Version) {
+			name = fmt.Sprintf("%s (%s)", name, t.Version)
+		}
+		perf := t.Performer.Name
+		if perf == "" {
+			perf = t.Album.Artist.Name
+		}
+		hits = append(hits, indexer.TrackHit{
+			TrackID:     strconv.FormatInt(t.ID, 10),
+			Title:       name,
+			ArtistName:  perf,
+			DurationSec: t.Duration,
+			ISRC:        t.ISRC,
+			AlbumID:     t.Album.ID,
+			AlbumTitle:  t.Album.Title,
+			CoverURL:    t.Album.Image.Large,
+		})
+	}
+	return hits, nil
 }

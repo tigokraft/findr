@@ -388,3 +388,143 @@ func mapRecordType(rt string) domain.ReleaseType {
 		return domain.ReleaseTypeOther
 	}
 }
+
+// getJSON performs a GET against the Deezer API and decodes the body into out.
+// Deezer reports some errors as HTTP 200 with an "error" object, so callers that
+// care check their own payload for emptiness.
+func (c *Client) getJSON(ctx context.Context, path string, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("deezer request %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("deezer %s returned status %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+type albumSearchResponse struct {
+	Data []struct {
+		ID         int64  `json:"id"`
+		Title      string `json:"title"`
+		CoverXL    string `json:"cover_xl"`
+		CoverBig   string `json:"cover_big"`
+		NbTracks   int    `json:"nb_tracks"`
+		RecordType string `json:"record_type"`
+		Explicit   bool   `json:"explicit_lyrics"`
+		Artist     struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"artist"`
+	} `json:"data"`
+}
+
+// SearchAlbum searches releases (albums, EPs, singles) by free text.
+func (c *Client) SearchAlbum(ctx context.Context, query string) ([]domain.Album, error) {
+	var res albumSearchResponse
+	if err := c.getJSON(ctx, "/search/album?limit=40&q="+url.QueryEscape(query), &res); err != nil {
+		return nil, err
+	}
+	albums := make([]domain.Album, 0, len(res.Data))
+	for _, item := range res.Data {
+		cover := item.CoverXL
+		if cover == "" {
+			cover = item.CoverBig
+		}
+		id := strconv.FormatInt(item.ID, 10)
+		albums = append(albums, domain.Album{
+			ID:          id,
+			ArtistID:    strconv.FormatInt(item.Artist.ID, 10),
+			ArtistName:  item.Artist.Name,
+			Title:       item.Title,
+			ReleaseType: mapRecordType(item.RecordType),
+			CoverURL:    cover,
+			TotalTracks: item.NbTracks,
+			Source:      "deezer",
+			SourceID:    id,
+			Status:      domain.StatusPending,
+		})
+	}
+	return albums, nil
+}
+
+type trackSearchItem struct {
+	ID       int64  `json:"id"`
+	Title    string `json:"title"`
+	ISRC     string `json:"isrc"`
+	Duration int    `json:"duration"`
+	Artist   struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"artist"`
+	Album struct {
+		ID       int64  `json:"id"`
+		Title    string `json:"title"`
+		CoverXL  string `json:"cover_xl"`
+		CoverBig string `json:"cover_big"`
+	} `json:"album"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (t trackSearchItem) hit() indexer.TrackHit {
+	cover := t.Album.CoverXL
+	if cover == "" {
+		cover = t.Album.CoverBig
+	}
+	return indexer.TrackHit{
+		TrackID:     strconv.FormatInt(t.ID, 10),
+		Title:       t.Title,
+		ArtistName:  t.Artist.Name,
+		DurationSec: t.Duration,
+		ISRC:        t.ISRC,
+		AlbumID:     strconv.FormatInt(t.Album.ID, 10),
+		AlbumTitle:  t.Album.Title,
+		CoverURL:    cover,
+	}
+}
+
+// SearchTrack searches tracks by artist and title using Deezer's advanced search
+// syntax, falling back to a plain query when the strict form finds nothing.
+func (c *Client) SearchTrack(ctx context.Context, artist, title string) ([]indexer.TrackHit, error) {
+	queries := []string{
+		fmt.Sprintf("artist:\"%s\" track:\"%s\"", artist, title),
+		strings.TrimSpace(artist + " " + title),
+	}
+	for _, q := range queries {
+		var res struct {
+			Data []trackSearchItem `json:"data"`
+		}
+		if err := c.getJSON(ctx, "/search/track?limit=15&q="+url.QueryEscape(q), &res); err != nil {
+			return nil, err
+		}
+		if len(res.Data) == 0 {
+			continue
+		}
+		hits := make([]indexer.TrackHit, 0, len(res.Data))
+		for _, t := range res.Data {
+			hits = append(hits, t.hit())
+		}
+		return hits, nil
+	}
+	return nil, nil
+}
+
+// LookupISRC resolves a track by ISRC. Returns nil, nil when Deezer has no match.
+func (c *Client) LookupISRC(ctx context.Context, isrc string) (*indexer.TrackHit, error) {
+	var t trackSearchItem
+	if err := c.getJSON(ctx, "/track/isrc:"+url.PathEscape(isrc), &t); err != nil {
+		return nil, err
+	}
+	if t.Error != nil || t.ID == 0 || t.Album.ID == 0 {
+		return nil, nil
+	}
+	h := t.hit()
+	return &h, nil
+}

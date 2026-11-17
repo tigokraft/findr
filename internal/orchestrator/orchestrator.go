@@ -15,6 +15,7 @@ import (
 	"github.com/findr-app/findr/internal/importer"
 	"github.com/findr-app/findr/internal/indexer"
 	"github.com/findr-app/findr/internal/navidrome"
+	"github.com/findr-app/findr/internal/spotify"
 	"github.com/findr-app/findr/internal/storage"
 	"github.com/findr-app/findr/internal/verifier"
 )
@@ -30,6 +31,13 @@ type Orchestrator struct {
 	importer   *importer.Importer
 	navidrome  *navidrome.Client
 	queueMgr   *QueueManager
+
+	// Playlist import state (see playlists.go).
+	playlistMu    sync.Mutex
+	spotifyClient *spotify.Client
+	spotifyKey    string
+	previewCache  map[string]*cachedPreview
+	m3uMu         sync.Mutex
 }
 
 // NewOrchestrator creates a new pipeline orchestrator.
@@ -151,16 +159,32 @@ func (o *Orchestrator) AddArtist(ctx context.Context, artist *domain.Artist, mon
 		rel.ArtistID = artist.ID
 		rel.ArtistName = artist.Name
 		rel.Monitored = monitor
+		// Re-indexing an artist (e.g. the 6-hourly sync) must not reset what the
+		// library already knows: download status, the user's monitor choice and
+		// the cached tracklist would otherwise be overwritten by indexer defaults.
+		if existing, err := o.repo.GetAlbum(ctx, rel.ID); err == nil && existing != nil {
+			rel.Status = existing.Status
+			rel.Monitored = existing.Monitored
+			if len(rel.Tracks) == 0 {
+				rel.Tracks = existing.Tracks
+			}
+			if rel.UPC == "" {
+				rel.UPC = existing.UPC
+			}
+			rel.CreatedAt = existing.CreatedAt
+		}
 		if err := o.repo.SaveAlbum(ctx, rel); err != nil {
 			return artist, releases, fmt.Errorf("save album %s: %w", rel.Title, err)
 		}
 	}
 
 	if downloadAll {
-		go func() {
-			bgCtx := context.Background()
-			_, _ = o.DownloadArtistReleases(bgCtx, artist.ID, nil, nil)
-		}()
+		// Route through the queue so releases download in parallel up to the configured slot limit.
+		if n, err := o.EnqueueArtistReleases(context.Background(), artist.ID, nil); err != nil {
+			fmt.Printf("[findr Queue ERROR] Enqueue releases for '%s' failed: %v\n", artist.Name, err)
+		} else {
+			fmt.Printf("[findr Queue] Enqueued %d releases for '%s'\n", n, artist.Name)
+		}
 	}
 
 	return artist, releases, nil
@@ -487,6 +511,10 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		_ = os.RemoveAll(stagingDir)
 	}
 
+	// Rewrite M3U files of imported playlists that include this release, so the
+	// Navidrome scan below picks the new tracks up.
+	o.refreshPlaylistsForAlbum(ctx, album.ID)
+
 	// 5. Trigger Navidrome rescan if enabled
 	if cfg.Navidrome.Enabled && navi != nil {
 		if progress != nil {
@@ -648,6 +676,25 @@ func (o *Orchestrator) EnqueueAllMissingReleases(ctx context.Context, releaseTyp
 			if alb.Status == domain.StatusCompleted {
 				continue
 			}
+			toEnqueue = append(toEnqueue, alb.ID)
+		}
+	}
+
+	// Releases tracked on their own (single-album tracking, playlist imports)
+	// belong to artists that are not monitored, so pick them up separately.
+	queued := make(map[string]bool, len(toEnqueue))
+	for _, id := range toEnqueue {
+		queued[id] = true
+	}
+	if monitoredAlbums, err := o.repo.ListMonitoredAlbums(ctx); err == nil {
+		for _, alb := range monitoredAlbums {
+			if queued[alb.ID] || alb.Status == domain.StatusCompleted || alb.Source == "local" {
+				continue
+			}
+			if len(typeFilterMap) > 0 && !typeFilterMap[alb.ReleaseType] {
+				continue
+			}
+			queued[alb.ID] = true
 			toEnqueue = append(toEnqueue, alb.ID)
 		}
 	}

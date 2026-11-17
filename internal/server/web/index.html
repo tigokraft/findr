@@ -47,6 +47,14 @@
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
     <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></symbol>
     <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+    <symbol id="i-playlist" viewBox="0 0 24 24"><path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/><path d="M12 12H3M16 6H3M12 18H3"/></symbol>
+    <symbol id="i-hdd" viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01M10 16h.01"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.38 3.62a1 1 0 0 1 3 3L7.37 18.64a2 2 0 0 1-.86.5l-2.87.84a.5.5 0 0 1-.62-.62l.84-2.87a2 2 0 0 1 .5-.86z"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3.5v17a.5.5 0 0 0 .77.42l13.2-8.5a.5.5 0 0 0 0-.84L6.77 3.08A.5.5 0 0 0 6 3.5Z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
   </defs>
 </svg>
 
@@ -70,11 +78,17 @@
       <a class="nav-item" data-view="search" href="#search" title="Search &amp; Add">
         <svg class="i"><use href="#i-search"/></svg><span class="nav-label">Search &amp; Add</span>
       </a>
+      <a class="nav-item" data-view="playlists" href="#playlists" title="Playlists">
+        <svg class="i"><use href="#i-playlist"/></svg><span class="nav-label">Playlists</span><span class="nav-count" id="navPlaylistCount"></span>
+      </a>
       <a class="nav-item" data-view="activity" href="#activity" title="Queue &amp; History">
         <svg class="i"><use href="#i-activity"/></svg><span class="nav-label">Queue &amp; History</span><span class="badge" id="sidebarQueueCount" hidden>0</span>
       </a>
       <a class="nav-item" data-view="import" href="#import" title="Manual Import">
         <svg class="i"><use href="#i-upload"/></svg><span class="nav-label">Manual Import</span>
+      </a>
+      <a class="nav-item" data-view="files" href="#files" title="Files">
+        <svg class="i"><use href="#i-hdd"/></svg><span class="nav-label">Files</span>
       </a>
       <div class="nav-group" id="navSettingsGroup">
         <a class="nav-item" data-view="settings" href="#settings" title="Settings">
@@ -125,6 +139,8 @@
             <button class="menu-item" role="menuitem" type="button" onclick="menuRun(scanLibraryArtists)"><svg class="i"><use href="#i-layers"/></svg>Import artists from disk</button>
             <button class="menu-item" role="menuitem" type="button" onclick="menuRun(downloadAllArtistsReleases)"><svg class="i"><use href="#i-download"/></svg>Download all missing</button>
             <div class="menu-sep" role="separator"></div>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('playlists'))"><svg class="i"><use href="#i-playlist"/></svg>Spotify playlists</button>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('files'))"><svg class="i"><use href="#i-hdd"/></svg>Files</button>
             <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('system'))"><svg class="i"><use href="#i-server"/></svg>System &amp; disks</button>
             <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('settings'))"><svg class="i"><use href="#i-settings"/></svg>Settings</button>
             <button class="menu-item" role="menuitem" type="button" onclick="menuRun(focusCatalogSearch)"><svg class="i"><use href="#i-search"/></svg>Search catalog<kbd>⌘K</kbd></button>
@@ -138,9 +154,13 @@
       <!-- Library -->
       <section id="view-artists" class="view active" aria-label="Library">
         <div class="toolbar">
+          <div class="seg" id="libraryModeSeg" role="tablist" aria-label="Library view">
+            <button type="button" class="active" data-mode="artists" role="tab" aria-selected="true" onclick="setLibraryMode('artists')">Artists</button>
+            <button type="button" data-mode="albums" role="tab" aria-selected="false" onclick="setLibraryMode('albums')">Tracked albums<span class="count" id="libraryAlbumCount"></span></button>
+          </div>
           <div class="input-pill">
             <svg class="i"><use href="#i-search"/></svg>
-            <input type="search" id="libraryFilter" placeholder="Filter artists" aria-label="Filter artists" oninput="renderFilteredArtists()">
+            <input type="search" id="libraryFilter" placeholder="Filter artists" aria-label="Filter artists" oninput="renderLibrary()">
           </div>
           <span class="toolbar-meta" id="artistCountSummary">Loading</span>
           <span class="spacer"></span>
@@ -212,12 +232,16 @@
       <section id="view-search" class="view" aria-label="Search &amp; Add">
         <div class="search-hero">
           <p class="eyebrow">Search &amp; Add</p>
-          <h2 class="h-xl">Find an artist and track every release.</h2>
-          <p class="lead">Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.</p>
-          <form class="search-bar" onsubmit="event.preventDefault(); executeArtistSearch();">
+          <h2 class="h-xl" id="searchHeadline">Find an artist and track every release.</h2>
+          <p class="lead" id="searchLead">Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.</p>
+          <div class="seg" id="searchModeSeg" role="radiogroup" aria-label="Search for" style="margin-bottom:14px">
+            <button type="button" class="active" data-mode="artists" role="radio" aria-checked="true" onclick="setSearchMode('artists')">Artists</button>
+            <button type="button" data-mode="albums" role="radio" aria-checked="false" onclick="setSearchMode('albums')">Albums</button>
+          </div>
+          <form class="search-bar" onsubmit="event.preventDefault(); executeSearch();">
             <div class="input-pill lg">
               <svg class="i"><use href="#i-search"/></svg>
-              <input type="search" id="searchQueryInput" placeholder="Artist name" aria-label="Artist name" enterkeyhint="search" autocomplete="off">
+              <input type="search" id="searchQueryInput" placeholder="Artist name" aria-label="Search query" enterkeyhint="search" autocomplete="off">
               <kbd>⌘K</kbd>
             </div>
             <div class="seg" id="searchProviderSeg" role="radiogroup" aria-label="Catalog">
@@ -391,6 +415,60 @@
         </div>
       </section>
 
+      <!-- Playlists -->
+      <section id="view-playlists" class="view" aria-label="Playlists">
+        <div id="playlistsListPane">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title">Import a Spotify playlist</h3>
+                <p class="card-sub">Paste a public playlist link. findr matches each song to a release in your catalog, then tracks those releases. Downloads are whole releases; the playlist file it writes lists only the playlist's songs.</p>
+              </div>
+            </div>
+            <form class="inline-form" onsubmit="event.preventDefault(); previewSpotifyPlaylist();">
+              <input type="text" id="playlistUrlInput" placeholder="https://open.spotify.com/playlist/…" aria-label="Spotify playlist link" autocomplete="off">
+              <button class="btn btn-primary" id="btnPlaylistPreview" type="submit"><svg class="i"><use href="#i-search"/></svg>Match songs</button>
+            </form>
+          </div>
+
+          <div class="card" id="playlistPreviewCard" hidden></div>
+
+          <div class="section-head">
+            <h3 class="section-title">Imported playlists</h3>
+            <span class="toolbar-meta" id="playlistCountMeta"></span>
+          </div>
+          <div class="rows" id="playlistList"></div>
+        </div>
+
+        <div id="playlistDetailPane" hidden>
+          <div class="back-row">
+            <button class="btn btn-sm btn-ghost" type="button" onclick="go('playlists')"><svg class="i"><use href="#i-chev-left"/></svg><span>Playlists</span></button>
+          </div>
+          <div id="playlistDetail"></div>
+        </div>
+      </section>
+
+      <!-- Files -->
+      <section id="view-files" class="view" aria-label="Files">
+        <div class="toolbar">
+          <div class="seg" id="filesRootSeg" role="tablist" aria-label="Folder"></div>
+          <span class="spacer"></span>
+          <div class="toolbar-actions">
+            <button class="btn" type="button" id="btnFilesImport" hidden onclick="importCurrentFolder()" title="Open this folder in Manual Import"><svg class="i"><use href="#i-upload"/></svg><span>Import folder</span></button>
+            <button class="btn" type="button" onclick="createFolderHere()"><svg class="i"><use href="#i-folder-plus"/></svg><span>New folder</span></button>
+            <button class="btn btn-icon" type="button" onclick="loadFiles()" aria-label="Refresh" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
+          </div>
+        </div>
+        <div class="file-path" id="filesBreadcrumb"></div>
+        <p class="toolbar-meta" id="filesMeta" style="margin:0 0 14px"></p>
+        <div class="rows" id="filesList"></div>
+        <div class="player" id="filesPlayer" hidden>
+          <div style="min-width:0"><div class="row-title" id="filesPlayerTitle"></div></div>
+          <audio id="filesAudio" controls preload="none"></audio>
+          <button class="btn btn-icon btn-sm btn-ghost" type="button" aria-label="Close player" onclick="closePlayer()"><svg class="i"><use href="#i-x"/></svg></button>
+        </div>
+      </section>
+
       <!-- Settings -->
       <section id="view-settings" class="view" aria-label="Settings">
         <div class="seg settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings sections">
@@ -486,7 +564,7 @@
               </div>
             </div>
             <div class="card">
-              <div class="card-head"><div><h3 class="card-title">Spotify credentials</h3><p class="card-sub">Only needed when Spotify is the indexer.</p></div></div>
+              <div class="card-head"><div><h3 class="card-title">Spotify credentials</h3><p class="card-sub">Optional, for playlist import. Without them findr reads the public player page, which lists up to 100 songs. With them it asks the Web API first, which also gives exact recording codes (ISRCs) when Spotify returns the songs.</p></div></div>
               <div class="form-grid">
                 <div class="field"><label for="cfg_spotify_client_id">Client ID</label><input type="text" id="cfg_spotify_client_id" placeholder="From developer.spotify.com"></div>
                 <div class="field"><label for="cfg_spotify_client_secret">Client secret</label><input type="password" id="cfg_spotify_client_secret" placeholder="Client secret"></div>

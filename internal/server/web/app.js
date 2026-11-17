@@ -114,6 +114,8 @@ const TITLES = {
   artists: 'Library',
   artist: 'Artist',
   search: 'Search & Add',
+  playlists: 'Playlists',
+  files: 'Files',
   activity: 'Queue & History',
   import: 'Manual Import',
   settings: 'Settings',
@@ -157,6 +159,7 @@ function navigateTo(viewName) {
   if (viewName === 'import') initManualImport();
   if (viewName === 'settings') loadSettings();
   if (viewName === 'system') loadSystemOverview();
+  if (viewName === 'files') initFilesView();
   if (viewName === 'search' && !$('searchResultsGrid').innerHTML) {
     $('searchResultsGrid').innerHTML = emptyState('Search to see artists', 'Type a name above. Open a result to preview its releases before you add it.');
   }
@@ -186,6 +189,20 @@ function handleRoute() {
     const tab = hash.split('/')[1] || currentSettingsTab || 'storage';
     if (currentView !== 'settings') navigateTo('settings');
     openSettingsTab(tab, true);
+    return;
+  }
+  if (hash === 'playlists' || hash.startsWith('playlists/')) {
+    if (currentView !== 'playlists') navigateTo('playlists');
+    const pid = decodeURIComponent(hash.slice('playlists/'.length));
+    if (hash.startsWith('playlists/') && pid) openPlaylistDetail(pid); else showPlaylistList();
+    return;
+  }
+  if (hash === 'files' || hash.startsWith('files/')) {
+    const rest = hash.slice('files'.length).replace(/^\//, '');
+    const slash = rest.indexOf('/');
+    filesRoot = rest ? (slash < 0 ? rest : rest.slice(0, slash)) : (filesRoot || 'music');
+    filesPath = slash < 0 ? '' : decodeURIComponent(rest.slice(slash + 1));
+    navigateTo('files');
     return;
   }
   if (['artists', 'search', 'activity', 'import', 'system'].includes(hash)) navigateTo(hash);
@@ -259,7 +276,7 @@ async function loadLibraryArtists() {
     allArtists = (await res.json()) || [];
     libraryLoaded = true;
     $('navArtistCount').textContent = allArtists.length || '';
-    renderFilteredArtists();
+    if (libraryMode === 'albums') loadTrackedAlbums(); else renderFilteredArtists();
   } catch (err) {
     $('libraryGrid').innerHTML = emptyState('The library did not load', esc(err.message), '<button class="btn" type="button" onclick="loadLibraryArtists()">' + ic('refresh') + 'Try again</button>', true);
   }
@@ -550,7 +567,8 @@ function renderArtistReleases() {
           (preview ? '' :
             '<label class="switch-label" title="Monitor this release"><input type="checkbox" ' + (alb.monitored ? 'checked' : '') + ' onchange="toggleAlbumMonitoredFromPage(\'' + id + '\', this.checked)"><span>Monitor</span></label>' +
             statusChip(alb.status) +
-            '<button class="btn btn-sm grow" type="button" onclick="downloadSingleAlbumFromPage(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('download') + (alb.status === 'completed' ? 'Download again' : 'Download') + '</button>') +
+            '<button class="btn btn-sm grow" type="button" onclick="downloadSingleAlbumFromPage(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('download') + (alb.status === 'completed' ? 'Download again' : 'Download') + '</button>' +
+            (alb.status === 'completed' ? '<button class="btn btn-sm btn-icon" type="button" aria-label="Show files of ' + esc(alb.title) + '" title="Files on disk" onclick="openAlbumFiles(\'' + id + '\')">' + ic('folder') + '</button>' : '')) +
           '<button class="btn btn-sm btn-icon' + (preview ? ' grow' : '') + '" type="button" id="page-chevron-' + esc(alb.id) + '" aria-expanded="false" aria-label="Show tracks" title="Tracks" onclick="toggleAlbumTracksFromPage(\'' + id + '\')">' + ic('chev-down', 'chev') + '</button>' +
         '</div>' +
       '</div>' +
@@ -752,10 +770,10 @@ function setSearchProvider(p) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', String(on));
   });
-  if ($('searchQueryInput').value.trim()) executeArtistSearch();
+  if ($('searchQueryInput').value.trim()) executeSearch();
 }
 
-function quickSearch(name) { $('searchQueryInput').value = name; executeArtistSearch(); }
+function quickSearch(name) { $('searchQueryInput').value = name; executeSearch(); }
 
 async function executeArtistSearch() {
   const q = $('searchQueryInput').value.trim();
@@ -1464,6 +1482,589 @@ async function executeManualImport() {
     renderDetectedFiles();
     libraryLoaded = false;
     setTimeout(() => go('artists'), 1200);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+/* ───────────── shared fetch helper ───────────── */
+async function api(url, opts) {
+  const o = Object.assign({}, opts || {});
+  if (o.json !== undefined) {
+    o.headers = Object.assign({ 'Content-Type': 'application/json' }, o.headers || {});
+    o.body = JSON.stringify(o.json);
+    delete o.json;
+  }
+  const res = await fetch(url, o);
+  let data = null;
+  const text = await res.text();
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = { message: text }; }
+  if (!res.ok) throw new Error((data && (data.message || data.error)) || 'HTTP ' + res.status);
+  return data;
+}
+
+function formatBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i];
+}
+
+/* ───────────── Library: tracked albums ───────────── */
+let libraryMode = 'artists';
+let trackedAlbums = [];
+
+function setLibraryMode(mode) {
+  libraryMode = mode;
+  document.querySelectorAll('#libraryModeSeg button').forEach((b) => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  const f = $('libraryFilter');
+  f.placeholder = mode === 'albums' ? 'Filter albums' : 'Filter artists';
+  f.setAttribute('aria-label', f.placeholder);
+  if (mode === 'albums') loadTrackedAlbums(); else renderLibrary();
+}
+
+function renderLibrary() {
+  if (libraryMode === 'albums') renderTrackedAlbums(); else renderFilteredArtists();
+}
+
+async function loadTrackedAlbums() {
+  const grid = $('libraryGrid');
+  if (!trackedAlbums.length) grid.innerHTML = '<div class="tracks-note">Loading tracked albums</div>';
+  try {
+    trackedAlbums = (await api('/api/albums')) || [];
+    $('libraryAlbumCount').textContent = trackedAlbums.length || '';
+    renderTrackedAlbums();
+  } catch (err) {
+    grid.innerHTML = emptyState('Tracked albums did not load', esc(err.message), '', true);
+  }
+}
+
+function renderTrackedAlbums() {
+  const q = ($('libraryFilter').value || '').toLowerCase().trim();
+  const list = trackedAlbums.filter((a) => !q || (a.title || '').toLowerCase().includes(q) || (a.artist_name || '').toLowerCase().includes(q));
+  const done = trackedAlbums.filter((a) => a.status === 'completed').length;
+  $('artistCountSummary').textContent = q ? list.length + ' of ' + trackedAlbums.length : plural(trackedAlbums.length, 'album') + ' · ' + done + ' downloaded';
+  const grid = $('libraryGrid');
+  if (!list.length) {
+    grid.innerHTML = trackedAlbums.length
+      ? emptyState('No album matches “' + esc(q) + '”', 'Check the spelling or clear the filter.')
+      : emptyState('No tracked albums', 'Search for an album to track just that release, or import a Spotify playlist.',
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="btn btn-primary" type="button" onclick="setSearchMode(\'albums\'); focusCatalogSearch()">' + ic('search') + 'Search albums</button>' +
+          '<button class="btn" type="button" onclick="go(\'playlists\')">' + ic('playlist') + 'Import a playlist</button></div>');
+    return;
+  }
+  grid.innerHTML = '<div class="albums" style="grid-column:1/-1">' + list.map(albumCardHtml).join('') + '</div>';
+}
+
+function albumCardHtml(alb) {
+  const id = jsq(alb.id);
+  const done = alb.status === 'completed';
+  return '<div class="album" id="tracked-' + esc(alb.id) + '">' +
+    '<div class="album-art">' + imgTag(alb.cover_url, '', alb.title) + statusChip(alb.status) + '</div>' +
+    '<div class="album-body"><div class="album-title" title="' + esc(alb.title) + '">' + esc(alb.title) + '</div>' +
+      '<div class="album-sub"><a href="#artist/' + esc(encodeURIComponent(alb.artist_id)) + '">' + esc(alb.artist_name || '—') + '</a></div>' +
+      '<div class="album-sub">' + releaseMeta(alb) + '</div>' +
+      '<div class="album-actions">' +
+        '<button class="btn btn-sm" type="button" onclick="downloadTrackedAlbum(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('download') + (done ? 'Again' : 'Get') + '</button>' +
+        (done ? '<button class="btn btn-sm btn-icon" type="button" title="Files on disk" aria-label="Files of ' + esc(alb.title) + '" onclick="openAlbumFiles(\'' + id + '\')">' + ic('folder') + '</button>' : '') +
+        '<button class="btn btn-sm btn-icon" type="button" title="Stop tracking" aria-label="Stop tracking ' + esc(alb.title) + '" onclick="untrackAlbum(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('eye-off') + '</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+async function downloadTrackedAlbum(id, title) {
+  await downloadSingleAlbumFromPage(id, title);
+  const a = trackedAlbums.find((x) => x.id === id);
+  if (a) { a.status = 'pending'; renderTrackedAlbums(); }
+}
+
+async function untrackAlbum(id, title) {
+  if (!confirm('Stop tracking ' + title + '? Files on disk stay where they are.')) return;
+  try {
+    await api('/api/albums/' + encodeURIComponent(id), { method: 'PUT', json: { monitored: false } });
+    trackedAlbums = trackedAlbums.filter((a) => a.id !== id);
+    $('libraryAlbumCount').textContent = trackedAlbums.length || '';
+    renderTrackedAlbums();
+    showToast('Stopped tracking ' + title, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function openAlbumFiles(albumID) {
+  try {
+    const data = await api('/api/albums/' + encodeURIComponent(albumID) + '/files');
+    if (!data.exists) { showToast('No folder for this release was found in the music library', 'info'); return; }
+    go('files/music/' + encodeURIComponent(data.path || ''));
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+/* ───────────── Search: albums ───────────── */
+let searchMode = 'artists';
+let lastAlbumResults = [];
+
+function setSearchMode(mode) {
+  searchMode = mode;
+  document.querySelectorAll('#searchModeSeg button').forEach((b) => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+  const albums = mode === 'albums';
+  $('searchQueryInput').placeholder = albums ? 'Album title, optionally with the artist' : 'Artist name';
+  $('searchHeadline').textContent = albums ? 'Track a single album.' : 'Find an artist and track every release.';
+  $('searchLead').textContent = albums
+    ? 'Add just the release you want. The artist joins your library without monitoring, so findr does not pull their whole discography.'
+    : 'Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.';
+  $('searchResultsGrid').innerHTML = '';
+  $('searchResultsCount').textContent = '';
+  $('searchResultsHeader').textContent = 'Results';
+  if ($('searchQueryInput').value.trim()) executeSearch();
+  else $('searchResultsGrid').innerHTML = emptyState(albums ? 'Search to see albums' : 'Search to see artists', albums ? 'Type an album title above.' : 'Type a name above. Open a result to preview its releases before you add it.');
+}
+
+function executeSearch() {
+  if (searchMode === 'albums') return executeAlbumSearch();
+  return executeArtistSearch();
+}
+
+async function executeAlbumSearch() {
+  const q = $('searchQueryInput').value.trim();
+  if (!q) { $('searchQueryInput').focus(); return; }
+  const grid = $('searchResultsGrid');
+  $('searchResultsHeader').textContent = 'Albums for “' + q + '”';
+  $('searchResultsCount').textContent = 'searching';
+  grid.innerHTML = '<div class="tracks-note" style="grid-column:1/-1">Searching the catalog</div>';
+  try {
+    lastAlbumResults = (await api('/api/search/albums?q=' + encodeURIComponent(q))) || [];
+    $('searchResultsCount').textContent = plural(lastAlbumResults.length, 'release');
+    renderAlbumResults();
+  } catch (err) {
+    $('searchResultsCount').textContent = '';
+    grid.innerHTML = emptyState('Album search failed', esc(err.message), '<button class="btn" type="button" onclick="executeAlbumSearch()">' + ic('refresh') + 'Try again</button>', true);
+  }
+}
+
+function renderAlbumResults() {
+  const grid = $('searchResultsGrid');
+  if (!lastAlbumResults.length) {
+    grid.innerHTML = emptyState('No album found', 'Check the spelling, or add the artist name to the query.');
+    return;
+  }
+  grid.innerHTML = '<div class="albums" style="grid-column:1/-1">' + lastAlbumResults.map((alb) => {
+    const id = jsq(alb.id);
+    const tracked = alb.in_library && alb.monitored;
+    const actions = tracked
+      ? '<button class="btn btn-sm" type="button" onclick="openArtistPage(\'' + jsq(alb.artist_id) + '\')">' + ic('chev-right') + 'Artist</button>'
+      : '<button class="btn btn-sm" type="button" onclick="trackAlbumFromSearch(\'' + id + '\', false, this)">' + ic('plus') + 'Track</button>' +
+        '<button class="btn btn-sm btn-mint" type="button" onclick="trackAlbumFromSearch(\'' + id + '\', true, this)" title="Track and download">' + ic('download') + 'Get</button>';
+    return '<div class="album">' +
+      '<div class="album-art">' + imgTag(alb.cover_url, '', alb.title) + (alb.in_library ? statusChip(alb.status) : '') + '</div>' +
+      '<div class="album-body"><div class="album-title" title="' + esc(alb.title) + '">' + esc(alb.title) + '</div>' +
+        '<div class="album-sub">' + esc(alb.artist_name || '—') + '</div>' +
+        '<div class="album-sub">' + releaseMeta(alb) + '</div>' +
+        '<div class="album-actions">' + actions + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+async function trackAlbumFromSearch(id, download, btn) {
+  setBusy(btn, true, download ? 'Queueing' : 'Adding');
+  try {
+    const data = await api('/api/albums', { method: 'POST', json: { source_id: id, download: download } });
+    showToast(data.message || 'Album tracked', 'success');
+    const a = lastAlbumResults.find((x) => x.id === id);
+    if (a && data.album) Object.assign(a, { in_library: true, monitored: true, status: data.album.status, artist_id: data.album.artist_id });
+    libraryLoaded = false;
+    trackedAlbums = [];
+    if (download) refreshQueueBadge();
+    renderAlbumResults();
+  } catch (err) {
+    setBusy(btn, false);
+    showToast(err.message, 'error');
+  }
+}
+
+/* ───────────── Files ───────────── */
+let filesRoot = 'music';
+let filesPath = '';
+let filesRoots = [];
+let filesListing = null;
+
+async function initFilesView() {
+  try { filesRoots = (await api('/api/files/roots')) || []; } catch (e) { filesRoots = filesRoots || []; }
+  $('filesRootSeg').innerHTML = filesRoots.map((r) =>
+    '<button type="button" role="tab" aria-selected="' + (r.name === filesRoot) + '" class="' + (r.name === filesRoot ? 'active' : '') + '" onclick="go(\'files/' + jsq(r.name) + '\')" title="' + esc(r.path) + '">' + esc(r.label) + '</button>'
+  ).join('');
+  loadFiles();
+}
+
+function filesHash(root, path) { return 'files/' + root + (path ? '/' + encodeURIComponent(path) : ''); }
+
+async function loadFiles() {
+  const box = $('filesList');
+  $('btnFilesImport').hidden = filesRoot !== 'downloads' || !filesPath;
+  renderFilesBreadcrumb();
+  box.innerHTML = '<div class="tracks-note">Reading folder</div>';
+  try {
+    filesListing = await api('/api/files?root=' + encodeURIComponent(filesRoot) + '&path=' + encodeURIComponent(filesPath));
+    renderFiles();
+  } catch (err) {
+    $('filesMeta').textContent = '';
+    box.innerHTML = emptyState('This folder did not load', esc(err.message),
+      filesPath ? '<button class="btn" type="button" onclick="go(\'' + jsq(filesHash(filesRoot, parentPath(filesPath))) + '\')">' + ic('chev-left') + 'Up one level</button>' : '', true);
+  }
+}
+
+function parentPath(p) { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); }
+
+function renderFilesBreadcrumb() {
+  const root = filesRoots.find((r) => r.name === filesRoot);
+  const parts = filesPath ? filesPath.split('/') : [];
+  let acc = '';
+  let h = '<a href="#' + esc(filesHash(filesRoot, '')) + '">' + ic('hdd', 'i-sm') + esc(root ? root.label : filesRoot) + '</a>';
+  parts.forEach((p, i) => {
+    acc = acc ? acc + '/' + p : p;
+    h += '<span aria-hidden="true">/</span>' + (i === parts.length - 1 ? '<span>' + esc(p) + '</span>' : '<a href="#' + esc(filesHash(filesRoot, acc)) + '">' + esc(p) + '</a>');
+  });
+  $('filesBreadcrumb').innerHTML = h;
+  setCrumbs([{ label: 'Files', href: '#files' }].concat(parts.length ? [{ label: parts[parts.length - 1] }] : []));
+}
+
+function fileIcon(e) {
+  if (e.is_dir) return 'folder';
+  if (e.is_audio) return 'music';
+  return 'file';
+}
+
+function renderFiles() {
+  const l = filesListing;
+  const box = $('filesList');
+  const dirs = l.entries.filter((e) => e.is_dir).length;
+  $('filesMeta').textContent = [plural(dirs, 'folder'), plural(l.entries.length - dirs, 'file'), l.audio_count ? plural(l.audio_count, 'track') : '', formatBytes(l.total_size)].filter(Boolean).join(' · ');
+  const up = filesPath
+    ? '<div class="row file-row" onclick="go(\'' + jsq(filesHash(filesRoot, parentPath(filesPath))) + '\')"><span class="file-ic">' + ic('chev-left') + '</span><div class="row-title">..</div></div>'
+    : '';
+  if (!l.entries.length) {
+    box.innerHTML = up + emptyState('Empty folder', 'Nothing in here yet.');
+    return;
+  }
+  box.innerHTML = up + l.entries.map((e) => {
+    const p = jsq(e.path);
+    const open = e.is_dir ? 'go(\'' + jsq(filesHash(filesRoot, e.path)) + '\')' : (e.is_audio ? 'playFile(\'' + p + '\', \'' + jsq(e.name) + '\')' : '');
+    const when = e.mod_time ? new Date(e.mod_time).toLocaleDateString([], { dateStyle: 'medium' }) : '';
+    const sub = e.is_dir ? plural(e.children || 0, 'item') + ' · ' + when : formatBytes(e.size) + ' · ' + when;
+    return '<div class="row file-row"' + (open ? ' onclick="' + open + '"' : '') + '>' +
+      '<span class="file-ic' + (e.is_audio ? ' audio' : '') + '">' + (e.is_image ? '<img src="/api/files/raw?root=' + esc(encodeURIComponent(filesRoot)) + '&path=' + esc(encodeURIComponent(e.path)) + '" alt="" loading="lazy">' : ic(fileIcon(e))) + '</span>' +
+      '<div style="min-width:0"><div class="row-title" title="' + esc(e.name) + '">' + esc(e.name) + '</div><div class="row-sub">' + esc(sub) + '</div></div>' +
+      '<div class="file-acts" onclick="event.stopPropagation()">' +
+        (e.is_audio ? '<button class="btn btn-icon btn-sm btn-ghost" type="button" title="Play" aria-label="Play ' + esc(e.name) + '" onclick="playFile(\'' + p + '\', \'' + jsq(e.name) + '\')">' + ic('play') + '</button>' : '') +
+        (!e.is_dir ? '<a class="btn btn-icon btn-sm btn-ghost" title="Download" aria-label="Download ' + esc(e.name) + '" href="/api/files/raw?download=1&root=' + esc(encodeURIComponent(filesRoot)) + '&path=' + esc(encodeURIComponent(e.path)) + '">' + ic('download') + '</a>' : '') +
+        '<button class="btn btn-icon btn-sm btn-ghost" type="button" title="Rename" aria-label="Rename ' + esc(e.name) + '" onclick="renameFileEntry(\'' + p + '\', \'' + jsq(e.name) + '\')">' + ic('edit') + '</button>' +
+        '<button class="btn btn-icon btn-sm btn-ghost" type="button" title="Move" aria-label="Move ' + esc(e.name) + '" onclick="moveFileEntry(\'' + p + '\', \'' + jsq(e.name) + '\')">' + ic('move') + '</button>' +
+        '<button class="btn btn-icon btn-sm btn-ghost btn-danger" type="button" title="Delete" aria-label="Delete ' + esc(e.name) + '" onclick="deleteFileEntry(\'' + p + '\', \'' + jsq(e.name) + '\', ' + (e.is_dir ? 'true' : 'false') + ')">' + ic('trash') + '</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function playFile(path, name) {
+  const a = $('filesAudio');
+  a.src = '/api/files/raw?root=' + encodeURIComponent(filesRoot) + '&path=' + encodeURIComponent(path);
+  $('filesPlayerTitle').textContent = name;
+  $('filesPlayer').hidden = false;
+  a.play().catch(() => {});
+}
+
+function closePlayer() {
+  const a = $('filesAudio');
+  a.pause();
+  a.removeAttribute('src');
+  a.load();
+  $('filesPlayer').hidden = true;
+}
+
+async function fileAction(body, okMsg) {
+  try {
+    const data = await api('/api/files', { method: 'POST', json: Object.assign({ root: filesRoot }, body) });
+    showToast(okMsg || data.message || 'Done', 'success');
+    loadFiles();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function renameFileEntry(path, name) {
+  const next = prompt('Rename “' + name + '” to:', name);
+  if (!next || next === name) return;
+  fileAction({ action: 'rename', path: path, name: next }, 'Renamed to ' + next);
+}
+
+function moveFileEntry(path, name) {
+  const dest = prompt('Move “' + name + '” into which folder? Give a path inside this library, for example Artist/Album (2024). Missing folders are created.', parentPath(path));
+  if (dest === null) return;
+  fileAction({ action: 'move', path: path, dest: dest.trim().replace(/^\/+|\/+$/g, '') }, 'Moved ' + name);
+}
+
+function createFolderHere() {
+  const name = prompt('New folder name:');
+  if (!name) return;
+  fileAction({ action: 'mkdir', path: filesPath, name: name.trim() }, 'Created ' + name);
+}
+
+async function deleteFileEntry(path, name, isDir) {
+  const what = isDir ? 'the folder “' + name + '” and everything in it' : '“' + name + '”';
+  if (!confirm('Delete ' + what + ' from disk? This cannot be undone.')) return;
+  try {
+    const data = await api('/api/files?root=' + encodeURIComponent(filesRoot) + '&path=' + encodeURIComponent(path), { method: 'DELETE' });
+    showToast(data.message || 'Deleted', 'success');
+    if (data.releases_reset) { libraryLoaded = false; trackedAlbums = []; }
+    loadFiles();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function importCurrentFolder() {
+  if (!filesListing) return;
+  go('import');
+  setTimeout(() => {
+    switchImportMode('scan');
+    $('importScanPathInput').value = filesListing.abs_path;
+    executeDirectoryScan();
+  }, 60);
+}
+
+/* ───────────── Playlists ───────────── */
+let playlistPreview = null;
+const playlistSelected = new Set();
+
+function showPlaylistList() {
+  $('playlistsListPane').hidden = false;
+  $('playlistDetailPane').hidden = true;
+  setTitle('Playlists');
+  setCrumbs([]);
+  loadPlaylists();
+}
+
+async function loadPlaylists() {
+  const box = $('playlistList');
+  try {
+    const pls = (await api('/api/playlists')) || [];
+    $('navPlaylistCount').textContent = pls.length || '';
+    $('playlistCountMeta').textContent = pls.length ? plural(pls.length, 'playlist') : '';
+    if (!pls.length) {
+      box.innerHTML = emptyState('No playlists yet', 'Paste a Spotify playlist link above to import one.');
+      return;
+    }
+    box.innerHTML = pls.map((pl) => {
+      const pct = pl.track_count ? Math.round((pl.downloaded_count / pl.track_count) * 100) : 0;
+      const sub = [pl.owner, plural(pl.track_count, 'song'), plural(pl.album_count, 'release'), pl.downloaded_count + ' on disk'].filter(Boolean).map(esc).join(' · ');
+      return '<div class="row" style="cursor:pointer" onclick="go(\'playlists/' + jsq(encodeURIComponent(pl.id)) + '\')">' + imgTag(pl.image_url, 'thumb thumb-lg', '') +
+        '<div style="min-width:0"><div class="row-title">' + esc(pl.name) + '</div><div class="row-sub">' + sub + '</div>' +
+          '<div class="segbar" style="--p:' + pct + '" role="progressbar" aria-label="Songs on disk" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '"></div></div>' +
+        (pl.monitored ? '<span class="chip chip-mint"><span class="dot"></span>Syncing</span>' : '<span class="chip"><span class="dot"></span>Paused</span>') +
+        '<button class="btn btn-icon btn-sm row-act" type="button" aria-label="Open ' + esc(pl.name) + '">' + ic('chev-right') + '</button>' +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    box.innerHTML = emptyState('Playlists did not load', esc(err.message), '', true);
+  }
+}
+
+async function previewSpotifyPlaylist() {
+  const url = $('playlistUrlInput').value.trim();
+  if (!url) { $('playlistUrlInput').focus(); return; }
+  const btn = $('btnPlaylistPreview');
+  const card = $('playlistPreviewCard');
+  setBusy(btn, true, 'Matching');
+  card.hidden = false;
+  card.innerHTML = '<div class="tracks-note"><span class="pulse" style="display:inline-block;vertical-align:middle;margin-right:10px"></span>Reading the playlist and matching each song. Long playlists take up to a minute.</div>';
+  try {
+    playlistPreview = await api('/api/playlists/preview', { method: 'POST', json: { url: url } });
+    playlistSelected.clear();
+    playlistPreview.albums.forEach((a) => { if (!a.excluded) playlistSelected.add(a.album_id); });
+    renderPlaylistPreview();
+  } catch (err) {
+    card.innerHTML = emptyState('That playlist could not be read', esc(err.message), '', true);
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
+function renderPlaylistPreview() {
+  const p = playlistPreview;
+  const pl = p.playlist;
+  const card = $('playlistPreviewCard');
+  const notes = [];
+  if (p.partial) notes.push('Spotify\'s public player page shows only the first 100 songs. Add Spotify API credentials under Settings → Indexer to read more when Spotify allows it.');
+  if (p.unresolved) notes.push(plural(p.unresolved, 'song') + ' had no match on ' + esc(p.indexer) + ' and will be skipped.');
+  const allOn = p.albums.length > 0 && p.albums.every((a) => playlistSelected.has(a.album_id));
+
+  card.innerHTML =
+    '<div class="pl-head">' + imgTag(pl.image_url, 'pl-cover', pl.name) +
+      '<div style="min-width:0"><p class="eyebrow">Spotify playlist</p><h3 class="card-title" style="font-size:20px">' + esc(pl.name) + '</h3>' +
+        '<p class="card-sub">' + [pl.owner, plural(pl.tracks.length, 'song'), p.resolved + ' matched', plural(p.albums.length, 'release')].filter(Boolean).map(esc).join(' · ') + '</p></div>' +
+    '</div>' +
+    notes.map((n) => '<p class="pl-note">' + ic('info', 'i-sm') + '<span>' + n + '</span></p>').join('') +
+    '<div class="card-head" style="margin:20px 0 12px"><div><h3 class="card-title">Releases to track</h3><p class="card-sub" id="plSelCount"></p></div>' +
+      '<label class="select-all"><input type="checkbox" ' + (allOn ? 'checked' : '') + ' onchange="togglePlaylistAll(this.checked)"><span>Select all</span></label></div>' +
+    '<div class="rows" id="plAlbumRows">' + p.albums.map((a) =>
+      '<label class="row pl-album">' +
+        '<input type="checkbox" ' + (playlistSelected.has(a.album_id) ? 'checked' : '') + ' onchange="togglePlaylistAlbum(\'' + jsq(a.album_id) + '\', this.checked)" aria-label="Track ' + esc(a.title) + '">' +
+        imgTag(a.cover_url, 'thumb', '') +
+        '<div style="min-width:0"><div class="row-title">' + esc(a.title) + '</div><div class="row-sub">' + esc(a.artist_name || '—') + ' · ' + plural(a.playlist_tracks, 'song') + ' from the playlist</div></div>' +
+        (a.in_library ? statusChip(a.status) : '<span class="chip"><span class="dot"></span>New</span>') +
+      '</label>'
+    ).join('') + '</div>' +
+    (p.unresolved ? '<details class="pl-unmatched"><summary>Songs without a match</summary><ol>' +
+      pl.tracks.filter((t) => !t.album_id).map((t) => '<li>' + esc(t.title) + ' <span class="dim">' + esc((t.artists || []).join(', ')) + '</span></li>').join('') + '</ol></details>' : '') +
+    '<div class="pl-foot">' +
+      '<label class="switch-label"><input type="checkbox" id="plDownloadNow" checked><span>Download now</span></label>' +
+      '<label class="switch-label" title="Re-read the playlist every 6 hours and track releases of new songs"><input type="checkbox" id="plMonitor" checked><span>Keep in sync</span></label>' +
+      '<span class="spacer"></span>' +
+      '<button class="btn btn-ghost" type="button" onclick="cancelPlaylistPreview()">Cancel</button>' +
+      '<button class="btn btn-mint" type="button" id="btnPlaylistImport" onclick="importSpotifyPlaylist()">' + ic('check') + 'Import playlist</button>' +
+    '</div>';
+  updatePlaylistSelCount();
+}
+
+function updatePlaylistSelCount() {
+  const el = $('plSelCount');
+  if (el) el.textContent = playlistSelected.size + ' of ' + playlistPreview.albums.length + ' selected. Unticked releases are skipped now and on later syncs.';
+}
+
+function togglePlaylistAlbum(id, on) { if (on) playlistSelected.add(id); else playlistSelected.delete(id); updatePlaylistSelCount(); }
+function togglePlaylistAll(on) {
+  playlistPreview.albums.forEach((a) => { if (on) playlistSelected.add(a.album_id); else playlistSelected.delete(a.album_id); });
+  renderPlaylistPreview();
+}
+function cancelPlaylistPreview() { playlistPreview = null; $('playlistPreviewCard').hidden = true; }
+
+async function importSpotifyPlaylist() {
+  if (!playlistPreview) return;
+  const btn = $('btnPlaylistImport');
+  setBusy(btn, true, 'Importing');
+  try {
+    const data = await api('/api/playlists', {
+      method: 'POST',
+      json: { url: playlistPreview.playlist.source_id, album_ids: Array.from(playlistSelected), download: $('plDownloadNow').checked, monitor: $('plMonitor').checked }
+    });
+    showToast(data.message || 'Playlist imported', 'success');
+    cancelPlaylistPreview();
+    $('playlistUrlInput').value = '';
+    refreshQueueBadge();
+    libraryLoaded = false;
+    trackedAlbums = [];
+    go('playlists/' + encodeURIComponent(data.playlist.id));
+  } catch (err) {
+    setBusy(btn, false);
+    showToast(err.message, 'error');
+  }
+}
+
+let currentPlaylistID = null;
+
+async function openPlaylistDetail(id) {
+  currentPlaylistID = id;
+  $('playlistsListPane').hidden = true;
+  $('playlistDetailPane').hidden = false;
+  const box = $('playlistDetail');
+  box.innerHTML = '<div class="tracks-note">Loading playlist</div>';
+  try {
+    const data = await api('/api/playlists/' + encodeURIComponent(id));
+    if (currentPlaylistID !== id) return;
+    renderPlaylistDetail(data.playlist, data.albums || []);
+  } catch (err) {
+    box.innerHTML = emptyState('The playlist did not load', esc(err.message), '<button class="btn" type="button" onclick="go(\'playlists\')">' + ic('chev-left') + 'Back to playlists</button>', true);
+  }
+}
+
+function renderPlaylistDetail(pl, albums) {
+  setTitle(pl.name);
+  setCrumbs([{ label: 'Playlists', href: '#playlists' }, { label: pl.name }]);
+  const byAlbum = {};
+  albums.forEach((a) => { byAlbum[a.album_id] = a; });
+  const id = jsq(pl.id);
+  const pct = pl.track_count ? Math.round((pl.downloaded_count / pl.track_count) * 100) : 0;
+  const synced = pl.last_synced_at && !pl.last_synced_at.startsWith('0001') ? new Date(pl.last_synced_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'never';
+
+  $('playlistDetail').innerHTML =
+    '<div class="card">' +
+      '<div class="pl-head">' + imgTag(pl.image_url, 'pl-cover', pl.name) +
+        '<div style="min-width:0;flex:1"><p class="eyebrow">Spotify playlist' + (pl.owner ? ' · ' + esc(pl.owner) : '') + '</p>' +
+          '<h3 class="card-title" style="font-size:22px">' + esc(pl.name) + '</h3>' +
+          '<p class="card-sub">' + [plural(pl.track_count, 'song'), pl.resolved_count + ' matched', plural(pl.album_count, 'release'), pl.downloaded_count + ' on disk', 'synced ' + synced].map(esc).join(' · ') + '</p>' +
+          '<div class="segbar" style="--p:' + pct + ';max-width:420px" role="progressbar" aria-label="Songs on disk" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '"></div>' +
+          (pl.m3u_path ? '<p class="row-sub" style="margin-top:10px" title="' + esc(pl.m3u_path) + '">' + ic('file', 'i-sm') + ' ' + esc(pl.m3u_path) + '</p>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="hero-actions" style="margin-top:18px">' +
+        '<button class="btn btn-mint" type="button" onclick="playlistAction(\'' + id + '\', \'download\', this)">' + ic('download') + 'Download missing</button>' +
+        '<button class="btn" type="button" onclick="playlistAction(\'' + id + '\', \'sync\', this)" title="Re-read the playlist from Spotify">' + ic('refresh') + 'Sync now</button>' +
+        '<button class="btn" type="button" onclick="playlistAction(\'' + id + '\', \'m3u\', this)" title="Write Playlists/' + esc(pl.name) + '.m3u8 in the music library">' + ic('playlist') + 'Write playlist file</button>' +
+        '<button class="btn" type="button" onclick="togglePlaylistMonitored(\'' + id + '\', ' + (!pl.monitored) + ')">' + ic(pl.monitored ? 'eye-off' : 'eye') + (pl.monitored ? 'Stop syncing' : 'Keep in sync') + '</button>' +
+        (pl.url ? '<a class="btn btn-icon" href="' + esc(pl.url) + '" target="_blank" rel="noopener" aria-label="Open in Spotify" title="Open in Spotify">' + ic('link') + '</a>' : '') +
+        '<button class="btn btn-icon btn-danger" type="button" onclick="deletePlaylist(\'' + id + '\', \'' + jsq(pl.name) + '\')" aria-label="Remove playlist" title="Remove playlist">' + ic('trash') + '</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-head"><div><h3 class="card-title">Songs</h3><p class="card-sub">Each song and the release findr tracks for it.</p></div></div>' +
+      '<ol class="tracklist pl-tracks">' + (pl.tracks || []).map((t) => {
+        const a = t.album_id ? byAlbum[t.album_id] : null;
+        let chip;
+        if (!t.album_id) chip = '<span class="chip chip-rose"><span class="dot"></span>No match</span>';
+        else if (a && a.excluded) chip = '<span class="chip"><span class="dot"></span>Skipped</span>';
+        else if (a && a.in_library) chip = statusChip(a.status);
+        else chip = '<span class="chip chip-peach"><span class="dot"></span>Adding</span>';
+        const n = t.position < 10 ? '0' + t.position : t.position;
+        return '<li class="track pl-track"><span class="t-no">' + esc(n) + '</span>' +
+          '<span class="t-title"><span>' + esc(t.title) + '</span><span class="row-sub">' + esc((t.artists || []).join(', ')) + (t.matched_album ? ' · ' + esc(t.matched_album) : '') + '</span></span>' +
+          chip + '<span class="t-dur">' + formatDuration(t.duration_sec) + '</span></li>';
+      }).join('') + '</ol>' +
+    '</div>';
+}
+
+async function playlistAction(id, action, btn) {
+  setBusy(btn, true, action === 'sync' ? 'Syncing' : action === 'm3u' ? 'Writing' : 'Queueing');
+  try {
+    const data = await api('/api/playlists/' + encodeURIComponent(id) + '/' + action, { method: 'POST' });
+    showToast(data.message || 'Done', action === 'm3u' && data.result && !data.result.found ? 'info' : 'success');
+    if (action === 'download') refreshQueueBadge();
+    setTimeout(() => { if (currentPlaylistID === id && currentView === 'playlists') openPlaylistDetail(id); }, action === 'sync' ? 4000 : 300);
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
+async function togglePlaylistMonitored(id, on) {
+  try {
+    await api('/api/playlists/' + encodeURIComponent(id), { method: 'PUT', json: { monitored: on } });
+    showToast(on ? 'Playlist will sync every 6 hours' : 'Playlist sync paused', 'success');
+    openPlaylistDetail(id);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deletePlaylist(id, name) {
+  if (!confirm('Remove ' + name + ' from findr? Its releases stay tracked and on disk.')) return;
+  const removeFile = confirm('Also delete its .m3u8 file from the music library?');
+  try {
+    await api('/api/playlists/' + encodeURIComponent(id) + (removeFile ? '?remove_m3u=true' : ''), { method: 'DELETE' });
+    showToast('Removed ' + name, 'success');
+    go('playlists');
   } catch (err) {
     showToast(err.message, 'error');
   }
