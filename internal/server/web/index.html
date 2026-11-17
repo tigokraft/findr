@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en" data-type="software">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1012">
+  <meta name="description" content="findr tracks the artists you follow, downloads their releases in lossless quality and files them into your Navidrome library.">
+  <title>findr</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23f4f4f5'/%3E%3Ccircle cx='16' cy='16' r='9.5' fill='%23111214'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23f4f4f5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>try { if (localStorage.getItem('findr.sidebar') === 'collapsed') document.documentElement.classList.add('sb-collapsed'); } catch (e) {}</script>
+  <style>/*__APP_CSS__*/</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4.2-4.2"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.67 4.14a2.34 2.34 0 0 1 4.66 0 2.34 2.34 0 0 0 3.32 1.91 2.34 2.34 0 0 1 2.33 4.03 2.34 2.34 0 0 0 0 3.83 2.34 2.34 0 0 1-2.33 4.03 2.34 2.34 0 0 0-3.32 1.92 2.34 2.34 0 0 1-4.66 0 2.34 2.34 0 0 0-3.32-1.92 2.34 2.34 0 0 1-2.33-4.03 2.34 2.34 0 0 0 0-3.83 2.34 2.34 0 0 1 2.33-4.03 2.34 2.34 0 0 0 3.32-1.92Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/><circle cx="5" cy="12" r="1.2"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="14" rx="1.5"/><rect width="7" height="7" x="3" y="14" rx="1.5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="M14.08 14.16a3 3 0 0 1-4.17-4.17"/><path d="m2 2 20 20"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-disc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2"/><path d="M6 12a6 6 0 0 1 6-6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+    <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <aside class="sidebar" aria-label="Main navigation">
+    <div class="sb-head">
+      <a class="brand" href="#artists" aria-label="findr home">
+        <span class="brand-mark"><svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="10" fill="#111214"/><circle cx="13" cy="13" r="6.4" fill="none" stroke="#2c2d33" stroke-width="1"/><circle cx="13" cy="13" r="3" fill="#f4f4f5"/></svg></span>
+        <span class="brand-name">findr</span>
+      </a>
+    </div>
+    <button class="sb-toggle" id="sbToggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" onclick="toggleSidebar()">
+      <svg class="i i-sm"><use href="#i-chev-left"/></svg>
+    </button>
+
+    <nav class="nav">
+      <a class="nav-item" data-view="artists" href="#artists" title="Library">
+        <svg class="i"><use href="#i-music"/></svg><span class="nav-label">Library</span><span class="nav-count" id="navArtistCount"></span>
+      </a>
+      <a class="nav-item" data-view="search" href="#search" title="Search &amp; Add">
+        <svg class="i"><use href="#i-search"/></svg><span class="nav-label">Search &amp; Add</span>
+      </a>
+      <a class="nav-item" data-view="activity" href="#activity" title="Queue &amp; History">
+        <svg class="i"><use href="#i-activity"/></svg><span class="nav-label">Queue &amp; History</span><span class="badge" id="sidebarQueueCount" hidden>0</span>
+      </a>
+      <a class="nav-item" data-view="import" href="#import" title="Manual Import">
+        <svg class="i"><use href="#i-upload"/></svg><span class="nav-label">Manual Import</span>
+      </a>
+      <div class="nav-group" id="navSettingsGroup">
+        <a class="nav-item" data-view="settings" href="#settings" title="Settings">
+          <svg class="i"><use href="#i-settings"/></svg><span class="nav-label">Settings</span><svg class="i nav-caret"><use href="#i-chev-down"/></svg>
+        </a>
+        <div class="nav-tree">
+          <a class="nav-sub" data-tab="storage" href="#settings/storage">Library &amp; storage<svg class="i"><use href="#i-chev-right"/></svg></a>
+          <a class="nav-sub" data-tab="indexer" href="#settings/indexer">Indexer<svg class="i"><use href="#i-chev-right"/></svg></a>
+          <a class="nav-sub" data-tab="downloaders" href="#settings/downloaders">Downloaders<svg class="i"><use href="#i-chev-right"/></svg></a>
+          <a class="nav-sub" data-tab="navidrome" href="#settings/navidrome">Navidrome<svg class="i"><use href="#i-chev-right"/></svg></a>
+          <a class="nav-sub" data-tab="yaml" href="#settings/yaml">Raw YAML<svg class="i"><use href="#i-chev-right"/></svg></a>
+        </div>
+      </div>
+      <a class="nav-item" data-view="system" href="#system" title="System &amp; Disks">
+        <svg class="i"><use href="#i-server"/></svg><span class="nav-label">System &amp; Disks</span>
+      </a>
+    </nav>
+
+    <div class="sb-foot">
+      <button class="nav-item" id="btnSidebarScan" type="button" title="Scan Navidrome library" onclick="triggerNavidromeScan()">
+        <svg class="i" id="scanIcon"><use href="#i-refresh"/></svg><span class="nav-label">Scan Navidrome</span>
+      </button>
+      <div class="core-status" title="Core online">
+        <span class="pulse" aria-hidden="true"></span><span class="nav-label">Core online</span><span class="nav-label mono dim" style="flex:none">v0.1.0</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <a class="brand brand-mobile" href="#artists" aria-label="findr home">
+        <span class="brand-mark"><svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="10" fill="#111214"/><circle cx="13" cy="13" r="6.4" fill="none" stroke="#2c2d33" stroke-width="1"/><circle cx="13" cy="13" r="3" fill="#f4f4f5"/></svg></span>
+      </a>
+      <div class="tb-title">
+        <div class="crumbs" id="crumbs"></div>
+        <h1 class="page-title" id="pageTitle">Library</h1>
+      </div>
+      <div class="tb-actions">
+        <button class="btn btn-primary btn-plus" type="button" onclick="focusCatalogSearch()" aria-label="Add artist">
+          <span class="plus-dot"><svg class="i"><use href="#i-plus"/></svg></span><span class="btn-text">Add artist</span>
+        </button>
+        <div class="menu-wrap">
+          <button class="btn btn-icon" id="menuBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="mainMenu" aria-label="More actions" onclick="toggleMenu()">
+            <svg class="i"><use href="#i-more"/></svg>
+          </button>
+          <div class="menu" id="mainMenu" role="menu" hidden>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(triggerNavidromeScan)"><svg class="i"><use href="#i-refresh"/></svg>Scan Navidrome</button>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(scanLibraryArtists)"><svg class="i"><use href="#i-layers"/></svg>Import artists from disk</button>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(downloadAllArtistsReleases)"><svg class="i"><use href="#i-download"/></svg>Download all missing</button>
+            <div class="menu-sep" role="separator"></div>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('system'))"><svg class="i"><use href="#i-server"/></svg>System &amp; disks</button>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(() => go('settings'))"><svg class="i"><use href="#i-settings"/></svg>Settings</button>
+            <button class="menu-item" role="menuitem" type="button" onclick="menuRun(focusCatalogSearch)"><svg class="i"><use href="#i-search"/></svg>Search catalog<kbd>⌘K</kbd></button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="page" tabindex="-1">
+
+      <!-- Library -->
+      <section id="view-artists" class="view active" aria-label="Library">
+        <div class="toolbar">
+          <div class="input-pill">
+            <svg class="i"><use href="#i-search"/></svg>
+            <input type="search" id="libraryFilter" placeholder="Filter artists" aria-label="Filter artists" oninput="renderFilteredArtists()">
+          </div>
+          <span class="toolbar-meta" id="artistCountSummary">Loading</span>
+          <span class="spacer"></span>
+          <div class="toolbar-actions">
+            <button class="btn btn-mint" id="btn_download_all_artists" type="button" onclick="downloadAllArtistsReleases()" title="Queue every missing release of every monitored artist">
+              <svg class="i"><use href="#i-download"/></svg><span>Download all missing</span>
+            </button>
+            <button class="btn" id="btn_scan_library" type="button" onclick="scanLibraryArtists()" title="Find artists and albums already on disk">
+              <svg class="i"><use href="#i-layers"/></svg><span>Import from disk</span>
+            </button>
+            <button class="btn btn-icon" type="button" onclick="loadLibraryArtists()" aria-label="Refresh library" title="Refresh library">
+              <svg class="i"><use href="#i-refresh"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="folders" id="libraryGrid"></div>
+      </section>
+
+      <!-- Artist -->
+      <section id="view-artist" class="view" aria-label="Artist">
+        <div class="back-row">
+          <button class="btn btn-sm btn-ghost" type="button" onclick="navigateBackFromArtist()">
+            <svg class="i"><use href="#i-chev-left"/></svg><span id="artistBackButtonLabel">Library</span>
+          </button>
+        </div>
+
+        <div class="hero" id="artistHeroCard">
+          <div class="hero-bg" id="artistHeroBackdrop"></div>
+          <div class="hero-inner">
+            <img class="hero-art" id="artistHeroImg" src="" alt="">
+            <div>
+              <div class="hero-chips">
+                <span class="chip chip-glass chip-up" id="artistHeroSourceTag">indexer</span>
+                <span class="chip chip-mint" id="artistHeroMonitoredPill"><span class="dot"></span>Monitored</span>
+                <span class="chip chip-peach" id="artistHeroPreviewBadge" hidden><span class="dot"></span>Catalog preview</span>
+              </div>
+              <h2 class="hero-name" id="artistHeroName">Artist</h2>
+              <p class="hero-bio" id="artistHeroOverview" hidden></p>
+              <div class="stat-row" id="artistStatsRibbon">
+                <div class="stat"><span class="ring" id="artistStatRing" style="--p:0"><span id="artistStatPct">0%</span></span><span><span class="stat-num" id="artistStatDownloaded">0</span><span class="stat-lbl">downloaded</span></span></div>
+                <div class="stat"><span class="stat-icon"><svg class="i"><use href="#i-disc"/></svg></span><span><span class="stat-num" id="artistStatTotal">0</span><span class="stat-lbl">releases</span></span></div>
+                <div class="stat"><span class="stat-icon"><svg class="i"><use href="#i-clock"/></svg></span><span><span class="stat-num" id="artistStatMissing">0</span><span class="stat-lbl">missing</span></span></div>
+                <div class="stat"><span class="stat-icon"><svg class="i"><use href="#i-eye"/></svg></span><span><span class="stat-num" id="artistStatMonitored">0</span><span class="stat-lbl">monitored</span></span></div>
+              </div>
+              <div class="hero-actions" id="artistHeroActions"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="discog">
+          <div class="discog-bar">
+            <div class="seg" id="artistCategoryTabs" role="tablist" aria-label="Release type"></div>
+            <span class="spacer"></span>
+            <label class="select-all" id="selectAllWrap" hidden><input type="checkbox" id="selectAllPageCb" onchange="toggleSelectAllInPage(this.checked)"><span>Select all</span></label>
+            <div class="input-pill">
+              <svg class="i"><use href="#i-search"/></svg>
+              <input type="search" id="artistReleaseFilterInput" placeholder="Filter releases" aria-label="Filter releases" oninput="onArtistReleaseFilter(this.value)">
+            </div>
+            <div class="seg seg-icons" role="group" aria-label="Layout">
+              <button class="active" id="btnToggleList" type="button" onclick="setArtistViewMode('list')" aria-label="List layout" title="List"><svg class="i"><use href="#i-list"/></svg></button>
+              <button id="btnToggleGrid" type="button" onclick="setArtistViewMode('grid')" aria-label="Grid layout" title="Grid"><svg class="i"><use href="#i-grid"/></svg></button>
+            </div>
+          </div>
+          <div id="artistReleasesList"></div>
+        </div>
+      </section>
+
+      <!-- Search -->
+      <section id="view-search" class="view" aria-label="Search &amp; Add">
+        <div class="search-hero">
+          <p class="eyebrow">Search &amp; Add</p>
+          <h2 class="h-xl">Find an artist and track every release.</h2>
+          <p class="lead">Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.</p>
+          <form class="search-bar" onsubmit="event.preventDefault(); executeArtistSearch();">
+            <div class="input-pill lg">
+              <svg class="i"><use href="#i-search"/></svg>
+              <input type="search" id="searchQueryInput" placeholder="Artist name" aria-label="Artist name" enterkeyhint="search" autocomplete="off">
+              <kbd>⌘K</kbd>
+            </div>
+            <div class="seg" id="searchProviderSeg" role="radiogroup" aria-label="Catalog">
+              <button type="button" class="active" data-provider="deezer" role="radio" aria-checked="true" onclick="setSearchProvider('deezer')">Deezer</button>
+              <button type="button" data-provider="qobuz" role="radio" aria-checked="false" onclick="setSearchProvider('qobuz')">Qobuz</button>
+            </div>
+            <button class="btn btn-primary btn-lg" type="submit">Search catalog</button>
+          </form>
+          <div class="suggest">
+            <span class="suggest-label">Try</span>
+            <button type="button" onclick="quickSearch('Daft Punk')">Daft Punk</button>
+            <button type="button" onclick="quickSearch('Radiohead')">Radiohead</button>
+            <button type="button" onclick="quickSearch('Aphex Twin')">Aphex Twin</button>
+            <button type="button" onclick="quickSearch('Miles Davis')">Miles Davis</button>
+            <button type="button" onclick="quickSearch('Justice')">Justice</button>
+          </div>
+        </div>
+
+        <div class="section-head">
+          <h3 class="section-title" id="searchResultsHeader">Results</h3>
+          <span class="toolbar-meta" id="searchResultsCount"></span>
+        </div>
+        <div class="folders" id="searchResultsGrid"></div>
+      </section>
+
+      <!-- Queue & history -->
+      <section id="view-activity" class="view" aria-label="Queue &amp; History">
+        <div class="summary">
+          <div class="stat"><span class="ring" id="queueSlotRing" style="--p:0"><span id="queueSlotText">0/2</span></span><span><span class="stat-num" id="queueActiveCount">0 active</span><span class="stat-lbl" id="queueConcurrencyDisplay">2 download slots</span></span></div>
+          <div class="stat"><span class="stat-icon"><svg class="i"><use href="#i-clock"/></svg></span><span><span class="stat-num" id="queuePendingCount">0</span><span class="stat-lbl">waiting</span></span></div>
+          <div class="stat"><span class="stat-icon"><svg class="i"><use href="#i-check"/></svg></span><span><span class="stat-num" id="historyDoneCount">0</span><span class="stat-lbl">finished</span></span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">Pipeline</h3>
+              <p class="card-sub">Updates every few seconds while this page is open.</p>
+            </div>
+            <span class="chip" id="queueBadge">Idle</span>
+          </div>
+          <div id="liveQueueContainer"></div>
+        </div>
+
+        <div class="card" id="historyTableCard">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">History</h3>
+              <p class="card-sub" id="historyCount">Loading</p>
+            </div>
+            <div class="head-actions" style="display:flex;gap:8px;align-items:center">
+              <div class="seg" id="historyFilterSeg" role="tablist" aria-label="History filter">
+                <button type="button" class="active" onclick="filterHistory('all', this)">All</button>
+                <button type="button" onclick="filterHistory('completed', this)">Completed</button>
+                <button type="button" onclick="filterHistory('failed', this)">Failed</button>
+                <button type="button" onclick="filterHistory('releases', this)">Releases</button>
+              </div>
+              <button class="btn btn-danger btn-icon" id="btnClearHistory" type="button" onclick="clearDownloadHistory()" aria-label="Clear history" title="Clear history"><svg class="i"><use href="#i-trash"/></svg></button>
+            </div>
+          </div>
+          <div id="historyTableContainer"></div>
+          <div id="releasesTableCard" hidden>
+            <div class="seg" style="margin-bottom:14px" role="tablist" aria-label="Release status">
+              <button type="button" class="active" onclick="filterActivity('all', this)">All</button>
+              <button type="button" onclick="filterActivity('completed', this)">Downloaded</button>
+              <button type="button" onclick="filterActivity('missing', this)">Missing</button>
+            </div>
+            <div class="rows" id="activityTableBody"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Import -->
+      <section id="view-import" class="view" aria-label="Manual Import">
+        <div class="toolbar" style="margin-bottom:0">
+          <div class="seg" role="tablist" aria-label="Import source">
+            <button type="button" class="active" id="btnModeUpload" onclick="switchImportMode('upload')"><svg class="i i-sm"><use href="#i-upload"/></svg>Upload files</button>
+            <button type="button" id="btnModeScan" onclick="switchImportMode('scan')"><svg class="i i-sm"><use href="#i-folder"/></svg>Scan a server folder</button>
+          </div>
+        </div>
+
+        <div id="paneUpload">
+          <div class="dropzone" id="audioDropzone" role="button" tabindex="0" aria-label="Choose audio files to upload"
+               onclick="document.getElementById('audioFileInput').click()"
+               onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+               ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleFileDrop(event)">
+            <input type="file" id="audioFileInput" multiple accept=".flac,.mp3,.m4a,.wav,.ogg,.opus,.aiff" hidden onchange="handleAudioFileSelect(event)">
+            <div class="dz-back"></div>
+            <div class="dz-front">
+              <div>
+                <div class="dz-title">Drop audio files here</div>
+                <div class="dz-sub">FLAC · MP3 · M4A · WAV · OGG · OPUS · AIFF</div>
+              </div>
+              <span class="dz-plus" aria-hidden="true"><svg class="i"><use href="#i-plus"/></svg></span>
+            </div>
+          </div>
+          <div class="progress" id="uploadProgressContainer" hidden>
+            <div class="progress-meta"><span id="uploadStatusText">Uploading</span><span id="uploadPercentText">0%</span></div>
+            <div class="bar"><span id="uploadProgressBar" style="width:0%"></span></div>
+          </div>
+        </div>
+
+        <div id="paneScan" hidden>
+          <div class="card" style="margin-top:22px">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title">Scan a server folder</h3>
+                <p class="card-sub">Give an absolute path on the findr host. Audio files inside it are read and tagged for review.</p>
+              </div>
+            </div>
+            <form class="inline-form" onsubmit="event.preventDefault(); executeDirectoryScan();">
+              <input type="text" id="importScanPathInput" placeholder="/downloads/incoming" aria-label="Folder path">
+              <button class="btn btn-primary" type="submit"><svg class="i"><use href="#i-search"/></svg>Scan folder</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card" id="importReviewCard" hidden style="margin-top:22px">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">Files found</h3>
+              <p class="card-sub" id="importFileSummary"></p>
+            </div>
+          </div>
+          <div class="rows" id="detectedFilesTableContainer"></div>
+
+          <div class="card-head" style="margin:32px 0 18px">
+            <div>
+              <h3 class="card-title">Where they go</h3>
+              <p class="card-sub">Pick an artist and release in your library, or type new ones.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="importArtistSelect">Artist</label>
+              <select id="importArtistSelect" onchange="handleImportArtistChange()"></select>
+              <input type="text" id="importNewArtistInput" placeholder="New artist name" aria-label="New artist name" hidden>
+            </div>
+            <div class="field">
+              <label for="importAlbumSelect">Release</label>
+              <select id="importAlbumSelect" onchange="handleImportAlbumChange()"></select>
+              <input type="text" id="importNewAlbumInput" placeholder="New release title" aria-label="New release title" hidden>
+            </div>
+          </div>
+          <div class="form-grid three">
+            <div class="field">
+              <label for="importReleaseType">Release type</label>
+              <select id="importReleaseType">
+                <option value="album">Album</option>
+                <option value="ep">EP</option>
+                <option value="single">Single</option>
+                <option value="compilation">Compilation</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="importYearInput">Year</label>
+              <input type="number" id="importYearInput" value="2024">
+            </div>
+            <div class="field">
+              <label for="importMoveOrCopy">File placement</label>
+              <select id="importMoveOrCopy">
+                <option value="move">Move (clears the staging copy)</option>
+                <option value="copy">Copy (keeps the source files)</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:24px">
+            <button class="btn btn-mint" type="button" onclick="executeManualImport()"><svg class="i"><use href="#i-check"/></svg>Import to library</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section id="view-settings" class="view" aria-label="Settings">
+        <div class="seg settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings sections">
+          <button type="button" class="settings-tab-btn active" data-tab="storage" onclick="openSettingsTab('storage')">Library &amp; storage</button>
+          <button type="button" class="settings-tab-btn" data-tab="indexer" onclick="openSettingsTab('indexer')">Indexer</button>
+          <button type="button" class="settings-tab-btn" data-tab="downloaders" onclick="openSettingsTab('downloaders')">Downloaders</button>
+          <button type="button" class="settings-tab-btn" data-tab="navidrome" onclick="openSettingsTab('navidrome')">Navidrome</button>
+          <button type="button" class="settings-tab-btn" data-tab="yaml" onclick="openSettingsTab('yaml')">Raw YAML</button>
+        </div>
+
+        <form id="settingsForm" onsubmit="saveConfiguration(event)">
+          <div id="tab-storage" class="settings-section active">
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Folders and naming</h3><p class="card-sub">Where finished albums live, where downloads land first, and how both are named.</p></div></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cfg_music_path">Music library path</label>
+                  <input type="text" id="cfg_music_path" placeholder="/music">
+                  <p class="hint">Organised albums are filed here.</p>
+                </div>
+                <div class="field">
+                  <label for="cfg_download_path">Download staging path</label>
+                  <input type="text" id="cfg_download_path" placeholder="/downloads">
+                  <p class="hint">Raw downloads from Qobuz and Soulseek wait here until verified.</p>
+                </div>
+                <div class="field">
+                  <label for="cfg_folder_format">Folder template</label>
+                  <input type="text" id="cfg_folder_format" placeholder="{Artist}/{Album} ({Year})">
+                  <p class="hint"><code>{Artist}</code> <code>{Album}</code> <code>{Year}</code></p>
+                </div>
+                <div class="field">
+                  <label for="cfg_file_format">File template</label>
+                  <input type="text" id="cfg_file_format" placeholder="{Track:02d} - {Title}">
+                  <p class="hint"><code>{Track:02d}</code> <code>{Title}</code> <code>{Artist}</code></p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Verification</h3><p class="card-sub">How closely a download must match the catalog before it is imported.</p></div></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cfg_duration_tol">Duration tolerance, seconds</label>
+                  <input type="number" id="cfg_duration_tol" min="0" max="30" value="4">
+                  <p class="hint">Allowed gap between a file's length and the catalog's.</p>
+                </div>
+                <div class="field">
+                  <label for="cfg_min_score">Minimum match score, 0.5 to 1.0</label>
+                  <input type="number" id="cfg_min_score" step="0.05" min="0.5" max="1.0" value="0.85">
+                  <p class="hint">Title similarity needed between file tags and catalog tracks.</p>
+                </div>
+              </div>
+              <div style="margin-top:12px">
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_allow_partial"><span>Import an album when only bonus tracks are missing</span></label></div>
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_delete_after_import" checked><span>Delete staging files after a successful import</span></label></div>
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_clean_empty_folders" checked><span>Remove empty staging folders</span></label></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Artwork and extras</h3><p class="card-sub">Files written next to each imported album.</p></div></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cfg_cover_filename">Cover filename</label>
+                  <input type="text" id="cfg_cover_filename" value="cover.jpg">
+                </div>
+                <div class="field">
+                  <label for="cfg_move_or_copy">File placement</label>
+                  <select id="cfg_move_or_copy">
+                    <option value="move">Move (fast, no duplicate on disk)</option>
+                    <option value="copy">Copy (keeps the staging copy)</option>
+                  </select>
+                </div>
+              </div>
+              <div style="margin-top:12px">
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_download_cover_art" checked><span>Save cover art at 1000 × 1000</span></label></div>
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_write_nfo"><span>Write an album.nfo file</span></label></div>
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_generate_m3u"><span>Write an M3U playlist</span></label></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-indexer" class="settings-section">
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Metadata indexer</h3><p class="card-sub">findr reads artists and discographies from streaming catalogs instead of MusicBrainz, so there are no rate-limit waits.</p></div></div>
+              <div class="field" style="max-width:460px">
+                <label for="cfg_indexer_provider">Default indexer</label>
+                <select id="cfg_indexer_provider">
+                  <option value="deezer">Deezer (no account needed)</option>
+                  <option value="qobuz">Qobuz (matches Qobuz downloads one to one)</option>
+                  <option value="spotify">Spotify Web API</option>
+                </select>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Spotify credentials</h3><p class="card-sub">Only needed when Spotify is the indexer.</p></div></div>
+              <div class="form-grid">
+                <div class="field"><label for="cfg_spotify_client_id">Client ID</label><input type="text" id="cfg_spotify_client_id" placeholder="From developer.spotify.com"></div>
+                <div class="field"><label for="cfg_spotify_client_secret">Client secret</label><input type="password" id="cfg_spotify_client_secret" placeholder="Client secret"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-downloaders" class="settings-section">
+            <div class="card">
+              <div class="card-head"><div><h3 class="card-title">Queue</h3><p class="card-sub">Releases beyond the limit wait in line and start as slots free up.</p></div></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cfg_preferred_downloader">Preferred downloader</label>
+                  <select id="cfg_preferred_downloader">
+                    <option value="slskd">Soulseek (slskd)</option>
+                    <option value="qobuz">Qobuz lossless and hi-res</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="cfg_max_concurrent_downloads">Downloads at once</label>
+                  <input type="number" id="cfg_max_concurrent_downloads" min="1" max="10" value="2">
+                  <p class="hint">1 to 10. The default is 2.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div><h3 class="card-title">Qobuz</h3><p class="card-sub">FLAC at CD quality, or hi-res up to 24-bit / 192 kHz.</p></div>
+                <label class="switch-label"><input type="checkbox" id="cfg_qobuz_dl_enabled" checked><span>Enabled</span></label>
+              </div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="cfg_qobuz_target_quality">Target quality</label>
+                  <select id="cfg_qobuz_target_quality">
+                    <option value="flac_16_44">CD quality, 16-bit / 44.1 kHz FLAC</option>
+                    <option value="flac_24_96">Hi-res, 24-bit / up to 96 kHz FLAC</option>
+                    <option value="flac_24_192">Studio master, 24-bit / 192 kHz FLAC</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="cfg_qobuz_user_token">User auth token</label>
+                  <input type="password" id="cfg_qobuz_user_token" placeholder="Token, for example from qobuz-dl">
+                  <p class="hint">Or set <code>FINDR_QOBUZ_USER_TOKEN</code> in the environment.</p>
+                </div>
+                <div class="field"><label for="cfg_qobuz_app_id">App ID</label><input type="text" id="cfg_qobuz_app_id" value="798273057"></div>
+                <div class="field"><label for="cfg_qobuz_app_secret">App secret (optional)</label><input type="password" id="cfg_qobuz_app_secret" placeholder="App secret"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div><h3 class="card-title">Soulseek (slskd)</h3><p class="card-sub">The fallback for vinyl rips, underground releases and albums out of print.</p></div>
+                <label class="switch-label"><input type="checkbox" id="cfg_slskd_enabled"><span>Enabled</span></label>
+              </div>
+              <div class="form-grid">
+                <div class="field"><label for="cfg_slskd_url">Server URL</label><input type="text" id="cfg_slskd_url" placeholder="http://localhost:5030"></div>
+                <div class="field"><label for="cfg_slskd_api_key">API key</label><input type="password" id="cfg_slskd_api_key" placeholder="From slskd.yml"></div>
+                <div class="field"><label for="cfg_slskd_dir">Download folder</label><input type="text" id="cfg_slskd_dir" placeholder="/downloads/slskd"></div>
+              </div>
+              <div style="margin-top:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+                <button type="button" class="btn" onclick="testSlskdConnection()"><svg class="i"><use href="#i-radio"/></svg>Test connection</button>
+                <span class="test-result" id="slskdTestResult" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-navidrome" class="settings-section">
+            <div class="card">
+              <div class="card-head">
+                <div><h3 class="card-title">Navidrome</h3><p class="card-sub">After each import findr asks Navidrome to rescan through the Subsonic API.</p></div>
+                <label class="switch-label"><input type="checkbox" id="cfg_navi_enabled"><span>Enabled</span></label>
+              </div>
+              <div class="form-grid">
+                <div class="field"><label for="cfg_navi_url">Server URL</label><input type="text" id="cfg_navi_url" placeholder="http://localhost:4533"></div>
+                <div class="field"><label for="cfg_navi_username">Username</label><input type="text" id="cfg_navi_username" placeholder="admin"></div>
+                <div class="field"><label for="cfg_navi_password">Password</label><input type="password" id="cfg_navi_password" placeholder="Password"></div>
+              </div>
+              <div style="margin-top:12px">
+                <div class="switch-row"><label class="switch-label"><input type="checkbox" id="cfg_navi_token_auth" checked><span>Use token auth (salted MD5, the password never travels in plain text)</span></label></div>
+              </div>
+              <div style="margin-top:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+                <button type="button" class="btn" onclick="testNavidromeConnection()"><svg class="i"><use href="#i-radio"/></svg>Test connection</button>
+                <span class="test-result" id="navidromeTestResult" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-yaml" class="settings-section">
+            <div class="card">
+              <div class="card-head">
+                <div><h3 class="card-title">config.yaml</h3><p class="card-sub">Edit the file directly. Saving here replaces the form values.</p></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <input type="file" id="yamlFileInput" accept=".yaml,.yml" hidden onchange="handleYamlFileUpload(event)">
+                  <button type="button" class="btn btn-sm" onclick="document.getElementById('yamlFileInput').click()"><svg class="i"><use href="#i-upload"/></svg>Load file</button>
+                  <button type="button" class="btn btn-sm" onclick="exportConfigFile()"><svg class="i"><use href="#i-download"/></svg>Export</button>
+                  <button type="button" class="btn btn-sm btn-primary" onclick="saveRawYaml()">Save YAML</button>
+                </div>
+              </div>
+              <textarea id="rawYamlEditor" rows="22" spellcheck="false" aria-label="Raw YAML configuration" style="font-family:var(--mono);font-size:13px"></textarea>
+            </div>
+          </div>
+
+          <div class="savebar" id="settingsSaveBar">
+            <p>Saved to <span class="code">config.yaml</span> and applied without a restart.</p>
+            <button type="submit" class="btn btn-mint"><svg class="i"><use href="#i-check"/></svg>Save settings</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- System -->
+      <section id="view-system" class="view" aria-label="System &amp; Disks">
+        <div class="tiles">
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-clock"/></svg></span><div><div class="tile-val" id="sysUptime">-</div><div class="tile-lbl">uptime</div></div></div>
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-users"/></svg></span><div><div class="tile-val" id="sysArtistCount">-</div><div class="tile-lbl">monitored artists</div></div></div>
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-disc"/></svg></span><div><div class="tile-val" id="sysAlbumCount">-</div><div class="tile-lbl">monitored albums</div></div></div>
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-search"/></svg></span><div><div class="tile-val" id="sysIndexer">-</div><div class="tile-lbl">indexer</div></div></div>
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-download"/></svg></span><div><div class="tile-val" id="sysDownloader">-</div><div class="tile-lbl">downloader</div></div></div>
+          <div class="tile"><span class="stat-icon"><svg class="i"><use href="#i-radio"/></svg></span><div><div class="tile-val" id="sysNavidrome">-</div><div class="tile-lbl">Navidrome rescan</div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h3 class="card-title">Disks</h3><p class="card-sub">findr v0.1.0 · Go core · SQLite (modernc, pure Go)</p></div></div>
+          <div class="disks" id="systemDisksList"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<nav class="tabbar" aria-label="Main navigation">
+  <a class="tab" data-view="artists" href="#artists"><svg class="i"><use href="#i-music"/></svg>Library</a>
+  <a class="tab" data-view="search" href="#search"><svg class="i"><use href="#i-search"/></svg>Search</a>
+  <a class="tab" data-view="activity" href="#activity"><svg class="i"><use href="#i-activity"/></svg>Queue<span class="badge" id="tabQueueCount" hidden>0</span></a>
+  <a class="tab" data-view="import" href="#import"><svg class="i"><use href="#i-upload"/></svg>Import</a>
+  <a class="tab" data-view="settings" href="#settings"><svg class="i"><use href="#i-settings"/></svg>Settings</a>
+</nav>
+
+<div class="batchbar" id="artistBatchToolbar" hidden></div>
+<div class="toasts" id="toastContainer" aria-live="polite"></div>
+
+<script>//__APP_JS__</script>
+</body>
+</html>
