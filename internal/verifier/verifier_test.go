@@ -45,6 +45,11 @@ func TestParseFilename(t *testing.T) {
 		{"CD 1 - 02 - Superheroes", 1, 2, "Superheroes"},
 		{"Disc 2 - 05 - High Life", 2, 5, "High Life"},
 		{"07 - _", 1, 7, "_"},
+		{"Tame Impala - 01 - Let It Happen", 1, 1, "Let It Happen"},
+		{"Tame Impala - Currents - 11 - Reality In Motion", 1, 11, "Reality In Motion"},
+		{"Daft Punk - 2-05 - Voyager", 2, 5, "Voyager"},
+		{"Daft Punk - 03. Aerodynamic", 1, 3, "Aerodynamic"},
+		{"Blink-182 - Dammit", 1, 0, "Blink-182 - Dammit"},
 	}
 
 	for _, tt := range tests {
@@ -168,5 +173,27 @@ func TestVerifyAlbumMissingTrackFailure(t *testing.T) {
 	}
 	if len(result.UnmatchedTracks) != 1 {
 		t.Errorf("expected 1 unmatched track, got %d", len(result.UnmatchedTracks))
+	}
+}
+
+// Soulseek rips are often named "Artist - NN - Title"; they must verify.
+func TestVerifyAlbumArtistPrefixedFilenames(t *testing.T) {
+	v := NewVerifier(Config{MinConfidenceScore: 0.85, DurationToleranceSec: 5})
+	album := &domain.Album{ID: "currents", Tracks: []domain.Track{
+		{TrackNumber: 1, Title: "Let It Happen"},
+		{TrackNumber: 2, Title: "Nangs"},
+		{TrackNumber: 11, Title: "Reality In Motion"},
+	}}
+	var cands []domain.CandidateFile
+	for _, name := range []string{"Tame Impala - 01 - Let It Happen", "Tame Impala - 02 - Nangs", "Tame Impala - 11 - Reality In Motion"} {
+		d, n, title := parseFilename(name)
+		cands = append(cands, domain.CandidateFile{Path: name + ".flac", Filename: name, DiscNumber: d, TrackNumber: n, Title: title})
+	}
+	res, err := v.VerifyAlbum(context.Background(), album, cands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Passed {
+		t.Fatalf("expected pass, got %s (confidence %.2f)", res.Reason, res.ConfidenceScore)
 	}
 }

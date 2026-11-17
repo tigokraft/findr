@@ -200,3 +200,76 @@ func TestSlskdDownloader_SearchAndDownload(t *testing.T) {
 		}
 	}
 }
+
+// A peer that times out on enqueue (slskd 500 "wait timed out") must not fail
+// the album: the next ranked peer is tried.
+func TestSlskdDownloader_EnqueueFailureTriesNextPeer(t *testing.T) {
+	tmpDir := t.TempDir()
+	downloadDir := filepath.Join(tmpDir, "downloads")
+	peerFolder := filepath.Join(downloadDir, "Currents")
+	_ = os.MkdirAll(peerFolder, 0755)
+	_ = os.WriteFile(filepath.Join(peerFolder, "01 - Let It Happen.flac"), []byte("audio1"), 0644)
+
+	file := SlskdResponseFile{Filename: `Music\Currents\01 - Let It Happen.flac`, Size: 6, SampleRate: 44100, BitDepth: 16}
+	deadEnqueues := 0
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/searches":
+			_, _ = w.Write([]byte(`{"id":"s1","state":"InProgress"}`))
+			return
+		case "/api/v0/searches/s1":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`{"state":"Completed"}`))
+			}
+			return
+		case "/api/v0/searches/s1/responses":
+			_ = json.NewEncoder(w).Encode([]SlskdSearchResponse{
+				{Username: "deadpeer", HasFreeUploadSlot: true, Files: []SlskdResponseFile{file}},
+				{Username: "goodpeer", HasFreeUploadSlot: false, QueueLength: 3, Files: []SlskdResponseFile{file}},
+			})
+			return
+		case "/api/v0/transfers/downloads/deadpeer":
+			if r.Method == http.MethodPost {
+				deadEnqueues++
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`"The wait timed out after 5000 milliseconds"`))
+			}
+			return
+		case "/api/v0/transfers/downloads/goodpeer":
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusCreated)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(SlskdUserTransfers{
+				Username: "goodpeer",
+				Directories: []SlskdDirectoryTransfers{{
+					Directory: `Music\Currents`,
+					Files: []SlskdTransferFile{{
+						ID: "t1", Filename: file.Filename, Size: 6, BytesTransferred: 6, State: "Completed, Succeeded",
+					}},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	dl := NewDownloader(Config{URL: ts.URL, APIKey: "k", DownloadDir: downloadDir})
+	album := &domain.Album{ID: "a1", Title: "Currents", ArtistName: "Tame Impala", TotalTracks: 1}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	job, err := dl.Download(ctx, album, filepath.Join(tmpDir, "staging"), nil)
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+	if deadEnqueues != 1 {
+		t.Errorf("expected the dead peer to be tried once first, got %d enqueue attempts", deadEnqueues)
+	}
+	if job.Status != domain.StatusDownloaded || len(job.DownloadedFiles) != 1 {
+		t.Errorf("expected 1 file downloaded from goodpeer, got status %s files %v", job.Status, job.DownloadedFiles)
+	}
+}

@@ -18,8 +18,10 @@ var (
 	// Regex patterns for extracting track numbers and discs from filenames
 	trackWithDiscPrefixRegex = regexp.MustCompile(`(?i)^(?:cd|disc|disk)\s*(\d{1,2})[\s/\\_.-]+(\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`) // "CD 1 - 02 Track"
 	trackWithDiscRegex       = regexp.MustCompile(`^(\d{1,2})[-_.](\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`)                              // "1-02 Track Name" or "1.02 Track"
-	trackSimpleRegex         = regexp.MustCompile(`^(\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`)                                          // "02 - Track Name" or "02 Track Name"
-	validAudioExts           = map[string]bool{
+	trackSimpleRegex         = regexp.MustCompile(`^(\d{1,3})(?:\s*[-.]\s*|\s+|_\s*)(.+)$`)                                            // "02 - Track Name" or "02 Track Name"
+	// "Artist - 02 - Track", "Artist - Album - 1-02 - Track", "Artist - 02. Track"
+	trackEmbeddedRegex = regexp.MustCompile(`^.+?\s+-\s+(?:(\d{1,2})[-.])?(\d{1,3})(?:\s*-\s+|\.\s+)(.+)$`)
+	validAudioExts     = map[string]bool{
 		".flac": true,
 		".mp3":  true,
 		".m4a":  true,
@@ -267,6 +269,17 @@ func parseFilename(name string) (disc int, trackNum int, title string) {
 		disc = 1
 		trackNum, _ = strconv.Atoi(matches[1])
 		title = strings.TrimSpace(matches[2])
+		return
+	}
+
+	// Check for a number after a leading artist/album prefix, e.g. "Tame Impala - 01 - Let It Happen"
+	if matches := trackEmbeddedRegex.FindStringSubmatch(name); len(matches) == 4 {
+		disc = 1
+		if matches[1] != "" {
+			disc, _ = strconv.Atoi(matches[1])
+		}
+		trackNum, _ = strconv.Atoi(matches[2])
+		title = strings.TrimSpace(matches[3])
 		return
 	}
 

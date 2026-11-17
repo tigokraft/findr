@@ -70,7 +70,7 @@ func (d *FallbackDownloader) Download(ctx context.Context, album *domain.Album, 
 			return job, nil
 		}
 		primaryErr = err
-		if d.fallback == nil {
+		if d.fallback == nil || ctx.Err() != nil {
 			return job, err
 		}
 
@@ -87,7 +87,15 @@ func (d *FallbackDownloader) Download(ctx context.Context, album *domain.Album, 
 			progress(5.0, fmt.Sprintf("Primary downloader unavailable (%v). Falling back to %s for '%s - %s'...",
 				primaryErr, d.fallback.Name(), album.ArtistName, album.Title))
 		}
-		return d.fallback.Download(ctx, album, targetDir, progress)
+		job, err := d.fallback.Download(ctx, album, targetDir, progress)
+		if err != nil && primaryErr != nil && d.primary != nil {
+			// Keep the primary's reason visible; the fallback error alone hides why we fell back.
+			err = fmt.Errorf("%s: %w (after %s failed: %v)", d.fallback.Name(), err, d.primary.Name(), primaryErr)
+			if job != nil {
+				job.ErrorMessage = err.Error()
+			}
+		}
+		return job, err
 	}
 
 	return nil, fmt.Errorf("no downloaders available")

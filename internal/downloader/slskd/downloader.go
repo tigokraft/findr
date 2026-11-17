@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,9 @@ type SlskdUserTransfers struct {
 }
 
 // NewDownloader creates a new slskd client.
+// maxPeerAttempts caps how many Soulseek peers are tried for one album or track.
+const maxPeerAttempts = 5
+
 func NewDownloader(cfg Config) *Downloader {
 	u := cfg.URL
 	if u == "" {
@@ -351,7 +355,9 @@ func (d *Downloader) fetchSearchResults(ctx context.Context, searchID string, al
 		if a.SourceData["free_slot"] != b.SourceData["free_slot"] {
 			return a.SourceData["free_slot"] == "1"
 		}
-		return a.SourceData["queue_len"] < b.SourceData["queue_len"]
+		aq, _ := strconv.Atoi(a.SourceData["queue_len"])
+		bq, _ := strconv.Atoi(b.SourceData["queue_len"])
+		return aq < bq
 	})
 
 	return results, isCompleted, nil
@@ -409,50 +415,75 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 		return job, fmt.Errorf("no matching files found on Soulseek network for %s - %s", album.ArtistName, album.Title)
 	}
 
-	// Pick best candidate
-	bestCandidate := results[0]
-	username := bestCandidate.SourceData["username"]
-	folderName := bestCandidate.SourceData["folder_name"]
-	filesJSON := bestCandidate.SourceData["files_json"]
+	// Try candidates in ranked order. Peers often go offline or stop answering
+	// between search and enqueue (slskd reports this as a 500 "wait timed out"),
+	// so one bad peer must not fail the whole album.
+	var downloadedFiles []string
+	var attemptErrs []string
+	attempts := 0
+	for _, candidate := range results {
+		if attempts >= maxPeerAttempts {
+			break
+		}
+		if ctx.Err() != nil {
+			job.Status = domain.StatusFailed
+			job.ErrorMessage = "download cancelled"
+			return job, ctx.Err()
+		}
 
-	var files []FilePayload
-	if err := json.Unmarshal([]byte(filesJSON), &files); err != nil || len(files) == 0 {
+		username := candidate.SourceData["username"]
+		folderName := candidate.SourceData["folder_name"]
+		var files []FilePayload
+		if err := json.Unmarshal([]byte(candidate.SourceData["files_json"]), &files); err != nil || len(files) == 0 {
+			continue
+		}
+		attempts++
+
+		job.TargetQuality = candidate.Format
+		job.Status = domain.StatusDownloading
+		if progress != nil {
+			progress(10.0, fmt.Sprintf("Selected peer '%s' (%d tracks, %s). Enqueueing download...", username, len(files), candidate.Format))
+		}
+
+		if err := d.enqueueFiles(ctx, username, files); err != nil {
+			fmt.Printf("[slskd] Enqueue from peer %s failed: %v. Trying next peer...\n", username, err)
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: enqueue: %v", username, err))
+			continue
+		}
+
+		if err := d.waitForDownload(ctx, username, files, progress); err != nil {
+			if ctx.Err() != nil {
+				job.Status = domain.StatusFailed
+				job.ErrorMessage = err.Error()
+				return job, err
+			}
+			d.cancelUserDownloads(context.Background(), username, files)
+			fmt.Printf("[slskd] Transfer from peer %s failed: %v. Trying next peer...\n", username, err)
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: %v", username, err))
+			continue
+		}
+
+		if progress != nil {
+			progress(90.0, "Transfers complete. Relocating files into staging directory...")
+		}
+
+		collected, err := d.collectDownloadedFiles(username, folderName, files, targetDir)
+		if err != nil {
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: collect: %v", username, err))
+			continue
+		}
+		downloadedFiles = collected
+		break
+	}
+
+	if downloadedFiles == nil {
 		job.Status = domain.StatusFailed
-		job.ErrorMessage = "invalid candidate files payload"
-		return job, fmt.Errorf("decode candidate files: %w", err)
-	}
-
-	job.TargetQuality = bestCandidate.Format
-	job.Status = domain.StatusDownloading
-
-	if progress != nil {
-		progress(10.0, fmt.Sprintf("Selected peer '%s' (%d tracks, %s). Enqueueing download...", username, len(files), bestCandidate.Format))
-	}
-
-	// Enqueue download with slskd
-	if err := d.enqueueFiles(ctx, username, files); err != nil {
-		job.Status = domain.StatusFailed
-		job.ErrorMessage = fmt.Sprintf("failed to enqueue download in slskd: %v", err)
-		return job, fmt.Errorf("enqueue download: %w", err)
-	}
-
-	// Poll download status until completion or cancellation
-	if err := d.waitForDownload(ctx, username, files, progress); err != nil {
-		job.Status = domain.StatusFailed
-		job.ErrorMessage = err.Error()
-		return job, err
-	}
-
-	if progress != nil {
-		progress(90.0, "Transfers complete. Relocating files into staging directory...")
-	}
-
-	// Move downloaded files into targetDir
-	downloadedFiles, err := d.collectDownloadedFiles(username, folderName, files, targetDir)
-	if err != nil {
-		job.Status = domain.StatusFailed
-		job.ErrorMessage = err.Error()
-		return job, fmt.Errorf("collect downloaded files: %w", err)
+		if len(attemptErrs) == 0 {
+			job.ErrorMessage = "invalid candidate files payload"
+			return job, fmt.Errorf("no usable Soulseek candidates for %s - %s", album.ArtistName, album.Title)
+		}
+		job.ErrorMessage = fmt.Sprintf("all %d Soulseek peers failed: %s", len(attemptErrs), strings.Join(attemptErrs, "; "))
+		return job, fmt.Errorf("enqueue download: %s", job.ErrorMessage)
 	}
 
 	job.Status = domain.StatusDownloaded
@@ -526,7 +557,7 @@ func (d *Downloader) DownloadTrack(ctx context.Context, artist string, track dom
 		Score    int
 	}
 
-	var bestCandidate *TrackCandidate
+	candidates := make(map[string]*TrackCandidate)
 	cleanTitle := strings.ToLower(strings.TrimSpace(track.Title))
 	cleanArtist := strings.ToLower(strings.TrimSpace(artist))
 
@@ -595,8 +626,9 @@ func (d *Downloader) DownloadTrack(ctx context.Context, artist string, track dom
 						score += 20
 					}
 
-					if bestCandidate == nil || score > bestCandidate.Score {
-						bestCandidate = &TrackCandidate{
+					key := u.Username + "\x00" + f.Filename
+					if prev, ok := candidates[key]; !ok || score > prev.Score {
+						candidates[key] = &TrackCandidate{
 							Username: u.Username,
 							File:     f,
 							Score:    score,
@@ -605,50 +637,93 @@ func (d *Downloader) DownloadTrack(ctx context.Context, artist string, track dom
 				}
 			}
 
-			// If we found a FLAC with free slot and queue=0, break early
-			if bestCandidate != nil && bestCandidate.Score >= 100 {
+			// Once a few strong candidates (FLAC, free slot, empty queue) exist, stop waiting
+			strong := 0
+			for _, c := range candidates {
+				if c.Score >= 100 {
+					strong++
+				}
+			}
+			if strong >= maxPeerAttempts {
 				goto SelectCandidate
 			}
 		}
 	}
 
 SelectCandidate:
-	if bestCandidate == nil {
+	if len(candidates) == 0 {
 		return "", fmt.Errorf("no matching track found on Soulseek network for '%s - %s'", artist, track.Title)
 	}
 
-	filePayload := []FilePayload{{
-		Filename: bestCandidate.File.Filename,
-		Size:     bestCandidate.File.Size,
-	}}
-
-	if progress != nil {
-		progress(20.0, fmt.Sprintf("Downloading track '%s' from Soulseek peer %s...", track.Title, bestCandidate.Username))
+	ranked := make([]*TrackCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		ranked = append(ranked, c)
 	}
-
-	if err := d.enqueueFiles(ctx, bestCandidate.Username, filePayload); err != nil {
-		return "", fmt.Errorf("enqueue track download: %w", err)
-	}
-
-	if err := d.waitForDownload(ctx, bestCandidate.Username, filePayload, progress); err != nil {
-		return "", fmt.Errorf("download track from soulseek: %w", err)
-	}
-
-	// Locate downloaded file in slskd download directory
-	norm := strings.ReplaceAll(bestCandidate.File.Filename, "\\", "/")
-	baseName := filepath.Base(norm)
-
-	var foundPath string
-	_ = filepath.Walk(d.downloadDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && filepath.Base(path) == baseName {
-			foundPath = path
-			return filepath.SkipAll
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Score != ranked[j].Score {
+			return ranked[i].Score > ranked[j].Score
 		}
-		return nil
+		return ranked[i].Username < ranked[j].Username
 	})
 
+	var foundPath string
+	var attemptErrs []string
+	triedUsers := make(map[string]bool)
+	for _, cand := range ranked {
+		if len(attemptErrs) >= maxPeerAttempts {
+			break
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		// One attempt per peer: a peer that timed out will time out again.
+		if triedUsers[cand.Username] {
+			continue
+		}
+		triedUsers[cand.Username] = true
+
+		filePayload := []FilePayload{{
+			Filename: cand.File.Filename,
+			Size:     cand.File.Size,
+		}}
+
+		if progress != nil {
+			progress(20.0, fmt.Sprintf("Downloading track '%s' from Soulseek peer %s...", track.Title, cand.Username))
+		}
+
+		if err := d.enqueueFiles(ctx, cand.Username, filePayload); err != nil {
+			fmt.Printf("[slskd] Track enqueue from peer %s failed: %v. Trying next peer...\n", cand.Username, err)
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: enqueue: %v", cand.Username, err))
+			continue
+		}
+
+		if err := d.waitForDownload(ctx, cand.Username, filePayload, progress); err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			d.cancelUserDownloads(context.Background(), cand.Username, filePayload)
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: %v", cand.Username, err))
+			continue
+		}
+
+		// Locate downloaded file in slskd download directory
+		baseName := filepath.Base(strings.ReplaceAll(cand.File.Filename, "\\", "/"))
+		_ = filepath.Walk(d.downloadDir, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && filepath.Base(path) == baseName {
+				foundPath = path
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if foundPath == "" {
+			attemptErrs = append(attemptErrs, fmt.Sprintf("%s: downloaded file '%s' not found in %s", cand.Username, baseName, d.downloadDir))
+			continue
+		}
+		break
+	}
+
 	if foundPath == "" {
-		return "", fmt.Errorf("downloaded track file '%s' not found on disk in %s", baseName, d.downloadDir)
+		return "", fmt.Errorf("enqueue track download: all %d Soulseek peers failed: %s", len(attemptErrs), strings.Join(attemptErrs, "; "))
 	}
 
 	actualExt := strings.ToLower(filepath.Ext(foundPath))

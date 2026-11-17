@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -439,6 +440,7 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 	d.mu.Unlock()
 
 	var downloadedFiles []string
+	var failedTracks []string
 	for i, trk := range album.Tracks {
 		select {
 		case <-ctx.Done():
@@ -506,36 +508,37 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 
 		fmt.Printf("[Qobuz Downloader] Downloading track [%d/%d] (Qobuz Track ID: %s): %s\n", i+1, totalTracks, trackID, trk.Title)
 
-		fileURL, err := d.getTrackFileURL(ctx, trackID, formatID)
+		actualPath, err := d.downloadTrackWithFallbackFormats(ctx, trackID, formatID, destPath)
 		if err != nil {
-			if trackFB != nil {
-				fmt.Printf("[Qobuz Downloader] No stream URL for track %d '%s' on Qobuz (%v). Attempting slskd fallback...\n", trackNum, trk.Title, err)
-				actualPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
-				if fbErr == nil && actualPath != "" {
-					fmt.Printf("[Qobuz Downloader] Successfully downloaded track %d '%s' via slskd fallback\n", trackNum, trk.Title)
-					downloadedFiles = append(downloadedFiles, actualPath)
-					continue
-				}
-				fmt.Printf("[Qobuz Downloader] slskd fallback failed for track '%s': %v\n", trk.Title, fbErr)
+			if ctx.Err() != nil {
+				job.Status = domain.StatusFailed
+				job.ErrorMessage = "download cancelled"
+				return job, ctx.Err()
 			}
-			return nil, fmt.Errorf("get file url for track %d '%s' (qobuz_id=%s): %w", trackNum, trk.Title, trackID, err)
-		}
-
-		if err := d.downloadToFileWithRetry(ctx, fileURL, destPath, trackID, formatID); err != nil {
 			if trackFB != nil {
 				fmt.Printf("[Qobuz Downloader] Qobuz download failed for track %d '%s' (%v). Attempting slskd fallback...\n", trackNum, trk.Title, err)
-				actualPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
-				if fbErr == nil && actualPath != "" {
+				fbPath, fbErr := trackFB.DownloadTrack(ctx, album.ArtistName, trk, destPath, progress)
+				if fbErr == nil && fbPath != "" {
 					fmt.Printf("[Qobuz Downloader] Successfully downloaded track %d '%s' via slskd fallback\n", trackNum, trk.Title)
-					downloadedFiles = append(downloadedFiles, actualPath)
+					downloadedFiles = append(downloadedFiles, fbPath)
 					continue
 				}
 				fmt.Printf("[Qobuz Downloader] slskd fallback failed for track '%s': %v\n", trk.Title, fbErr)
+				err = fmt.Errorf("%w; slskd fallback: %v", err, fbErr)
 			}
-			return nil, fmt.Errorf("download track %s to %s: %w", trk.Title, destPath, err)
+			// Keep going so one broken stream does not stop the rest of the album.
+			failedTracks = append(failedTracks, fmt.Sprintf("track %d '%s' (qobuz_id=%s): %v", trackNum, trk.Title, trackID, err))
+			continue
 		}
 
-		downloadedFiles = append(downloadedFiles, destPath)
+		downloadedFiles = append(downloadedFiles, actualPath)
+	}
+
+	if len(failedTracks) > 0 {
+		job.Status = domain.StatusFailed
+		job.DownloadedFiles = downloadedFiles
+		job.ErrorMessage = fmt.Sprintf("%d of %d tracks failed: %s", len(failedTracks), totalTracks, strings.Join(failedTracks, "; "))
+		return job, fmt.Errorf("qobuz: %s", job.ErrorMessage)
 	}
 
 	now := time.Now()
@@ -638,6 +641,50 @@ func (d *Downloader) getTrackFileURL(ctx context.Context, trackID string, format
 	return fileResp.URL, nil
 }
 
+// downloadTrackWithFallbackFormats fetches a track at the requested format and,
+// when Qobuz keeps cutting that stream short (seen as "unexpected EOF" on some
+// hi-res masters), steps down to the next lower lossless format.
+// Returns the path written.
+func (d *Downloader) downloadTrackWithFallbackFormats(ctx context.Context, trackID string, formatID int, destPath string) (string, error) {
+	var errs []string
+	for _, fid := range formatFallbackChain(formatID) {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		path := destPath
+		if fid == 5 {
+			path = strings.TrimSuffix(destPath, filepath.Ext(destPath)) + ".mp3"
+		}
+		fileURL, err := d.getTrackFileURL(ctx, trackID, fid)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("format %d: get file url: %v", fid, err))
+			continue
+		}
+		if err := d.downloadToFileWithRetry(ctx, fileURL, path, trackID, fid); err != nil {
+			errs = append(errs, fmt.Sprintf("format %d: %v", fid, err))
+			continue
+		}
+		if fid != formatID {
+			fmt.Printf("[Qobuz Downloader] Track %s downloaded at fallback format %d (requested %d)\n", trackID, fid, formatID)
+		}
+		return path, nil
+	}
+	return "", errors.New(strings.Join(errs, "; "))
+}
+
+// formatFallbackChain lists the formats to try, best first, never dropping
+// from lossless to lossy.
+func formatFallbackChain(formatID int) []int {
+	switch formatID {
+	case 27:
+		return []int{27, 7, 6}
+	case 7:
+		return []int{7, 6}
+	default:
+		return []int{formatID}
+	}
+}
+
 func (d *Downloader) downloadToFileWithRetry(ctx context.Context, mediaURL, destPath, trackID string, formatID int) error {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -691,10 +738,21 @@ func (d *Downloader) downloadToFile(ctx context.Context, mediaURL, destPath stri
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	written, err := io.Copy(out, resp.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if resp.ContentLength > 0 && written != resp.ContentLength {
+		return fmt.Errorf("short media download: got %d of %d bytes", written, resp.ContentLength)
+	}
+	if written < 1024 {
+		return fmt.Errorf("media download too small (%d bytes)", written)
+	}
+	return nil
 }
 
 func (d *Downloader) mapQualityToFormatID(quality domain.AudioQuality) int {
