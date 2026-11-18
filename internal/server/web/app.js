@@ -713,13 +713,27 @@ async function toggleAlbumTracksFromPage(albumID) {
   const alb = currentArtistAlbums.find((a) => a.id === albumID);
   if (!alb) return;
   if (!alb.tracks || !alb.tracks.length) {
-    if (isArtistPreviewMode) { renderAlbumTracklist(albumID, [], el); return; }
     el.innerHTML = '<div class="tracks-note">Fetching tracks</div>';
     try {
-      const res = await fetch('/api/albums/' + encodeURIComponent(albumID));
-      const detailed = await res.json();
-      alb.tracks = detailed.tracks || [];
-      alb.total_tracks = detailed.total_tracks || alb.tracks.length;
+      let detailed = null;
+      if (!isArtistPreviewMode) {
+        const res = await fetch('/api/albums/' + encodeURIComponent(albumID));
+        if (res.ok) detailed = await res.json();
+      }
+      // Preview releases are not in the library yet, and library rows can
+      // lack a stored track list: ask the catalog the release came from.
+      const source = alb.source || (currentArtistData && currentArtistData.source) || searchProvider;
+      const sourceID = alb.source_id || (isArtistPreviewMode ? alb.id : '');
+      if ((!detailed || !(detailed.tracks || []).length) && source && sourceID) {
+        const key = source + ':' + sourceID;
+        detailed = pickerCache[key];
+        if (!detailed || !(detailed.tracks || []).length) {
+          detailed = await api('/api/catalog/album?source=' + encodeURIComponent(source) + '&id=' + encodeURIComponent(sourceID));
+          pickerCache[key] = detailed;
+        }
+      }
+      alb.tracks = (detailed && detailed.tracks) || [];
+      alb.total_tracks = (detailed && detailed.total_tracks) || alb.tracks.length;
     } catch (err) {
       el.innerHTML = '<div class="tracks-note" style="color:var(--rose)">Tracks did not load: ' + esc(err.message) + '</div>';
       return;
