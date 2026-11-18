@@ -22,3 +22,9 @@ navidrome-data/
 Thumbs.db
 .taste-skill/
 .gemini/
+
+# Local secrets for docker compose
+.env
+
+# Optional slskd data
+slskd-data/
