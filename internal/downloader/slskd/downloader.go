@@ -398,6 +398,23 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 		CreatedAt:     time.Now(),
 	}
 
+	// A few picked tracks: fetch them one by one instead of a whole folder.
+	if album.IsPartial() && len(album.Tracks) > 0 {
+		files, err := d.downloadPickedTracks(ctx, album, targetDir, progress)
+		if err == nil {
+			job.Status = domain.StatusDownloaded
+			job.Progress = 100.0
+			job.DownloadedFiles = files
+			return job, nil
+		}
+		if ctx.Err() != nil {
+			job.Status = domain.StatusFailed
+			job.ErrorMessage = "download cancelled"
+			return job, ctx.Err()
+		}
+		fmt.Printf("[slskd] Track-by-track download for '%s - %s' failed (%v). Trying whole folders...\n", album.ArtistName, album.Title, err)
+	}
+
 	if progress != nil {
 		progress(5.0, fmt.Sprintf("Searching Soulseek network for '%s - %s'...", album.ArtistName, album.Title))
 	}
@@ -495,6 +512,43 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 	}
 
 	return job, nil
+}
+
+// downloadPickedTracks downloads each track of a partial release on its own.
+func (d *Downloader) downloadPickedTracks(ctx context.Context, album *domain.Album, targetDir string, progress downloader.ProgressFunc) ([]string, error) {
+	var files []string
+	total := len(album.Tracks)
+	for i, trk := range album.Tracks {
+		if ctx.Err() != nil {
+			return files, ctx.Err()
+		}
+		num := trk.TrackNumber
+		if num <= 0 {
+			num = i + 1
+		}
+		name := fmt.Sprintf("%02d - %s.flac", num, sanitizeName(trk.Title))
+		if trk.DiscNumber > 1 {
+			name = fmt.Sprintf("%d-%02d - %s.flac", trk.DiscNumber, num, sanitizeName(trk.Title))
+		}
+		var trackProgress downloader.ProgressFunc
+		if progress != nil {
+			base := float64(i) / float64(total) * 100.0
+			trackProgress = func(pct float64, msg string) {
+				progress(base+pct/float64(total), fmt.Sprintf("[%d/%d] %s", i+1, total, msg))
+			}
+		}
+		path, err := d.DownloadTrack(ctx, album.ArtistName, trk, filepath.Join(targetDir, name), trackProgress)
+		if err != nil {
+			return files, fmt.Errorf("track %d '%s': %w", num, trk.Title, err)
+		}
+		files = append(files, path)
+	}
+	return files, nil
+}
+
+func sanitizeName(name string) string {
+	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "", "?", "", "\"", "", "<", "", ">", "", "|", "")
+	return strings.TrimSpace(r.Replace(name))
 }
 
 // DownloadTrack searches Soulseek for an individual track and downloads it to destPath.

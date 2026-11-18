@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/findr-app/findr/internal/files"
+	"github.com/findr-app/findr/internal/orchestrator"
 )
 
 // Handlers for single-album tracking, library file management and playlist import.
@@ -34,7 +35,7 @@ func (s *Server) handleSearchAlbums(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
-	results, err := s.orch.SearchAlbums(r.Context(), q)
+	results, err := s.orch.SearchAlbums(r.Context(), r.URL.Query().Get("provider"), q)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return
@@ -42,12 +43,61 @@ func (s *Server) handleSearchAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
-// handleAddAlbum serves POST /api/albums: track a single release.
+// handleSearchTracks serves GET /api/search/tracks?q=&provider=.
+func (s *Server) handleSearchTracks(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	results, err := s.orch.SearchTracks(r.Context(), r.URL.Query().Get("provider"), q)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+// handleCatalogAlbum serves GET /api/catalog/album?source=&id=: a release with
+// its tracklist straight from a catalog, for the track picker.
+func (s *Server) handleCatalogAlbum(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("id is required"))
+		return
+	}
+	album, err := s.orch.GetCatalogAlbum(r.Context(), r.URL.Query().Get("source"), id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, album)
+}
+
+// handleResolveLink serves GET /api/resolve?url=: what a pasted link points to.
+func (s *Server) handleResolveLink(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("url"))
+	if raw == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("url is required"))
+		return
+	}
+	res, err := s.orch.ResolveLink(r.Context(), raw)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleAddAlbum serves POST /api/albums: track a single release, or only
+// some of its tracks (track_ids).
 func (s *Server) handleAddAlbum(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SourceID string `json:"source_id"`
-		ID       string `json:"id"`
-		Download bool   `json:"download"`
+		SourceID string   `json:"source_id"`
+		ID       string   `json:"id"`
+		Source   string   `json:"source"`
+		TrackIDs []string `json:"track_ids"`
+		Download bool     `json:"download"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, errors.New("invalid request body"))
@@ -57,14 +107,28 @@ func (s *Server) handleAddAlbum(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = req.ID
 	}
-	album, err := s.orch.AddAlbum(r.Context(), id, req.Download)
+	album, err := s.orch.AddRelease(r.Context(), orchestrator.AddReleaseRequest{
+		Source: req.Source, SourceID: id, TrackIDs: req.TrackIDs, Download: req.Download,
+	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	msg := fmt.Sprintf("Tracking %s by %s", album.Title, album.ArtistName)
+	what := album.Title
+	if n := len(album.WantedTracks()); album.IsPartial() {
+		if n == 1 {
+			what = fmt.Sprintf("“%s” from %s", album.WantedTracks()[0].Title, album.Title)
+		} else {
+			what = fmt.Sprintf("%d tracks from %s", n, album.Title)
+		}
+	}
+	msg := fmt.Sprintf("Tracking %s by %s", what, album.ArtistName)
 	if req.Download {
-		msg = fmt.Sprintf("Tracking and queued %s by %s", album.Title, album.ArtistName)
+		if album.Status == "completed" {
+			msg = fmt.Sprintf("%s by %s is already in the library", what, album.ArtistName)
+		} else {
+			msg = fmt.Sprintf("Queued %s by %s", what, album.ArtistName)
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"album": album, "message": msg})
 }

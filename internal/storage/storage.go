@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/findr-app/findr/internal/domain"
@@ -144,8 +145,19 @@ func (r *SQLiteRepository) migrate() error {
 	);
 	`
 
-	_, err := r.db.Exec(schema)
-	return err
+	if _, err := r.db.Exec(schema); err != nil {
+		return err
+	}
+	// Columns added after the first release. SQLite has no ADD COLUMN IF NOT
+	// EXISTS, so a "duplicate column" error just means it is already there.
+	for _, stmt := range []string{
+		`ALTER TABLE albums ADD COLUMN wanted_json TEXT`,
+	} {
+		if _, err := r.db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *SQLiteRepository) SaveArtist(ctx context.Context, artist *domain.Artist) error {
@@ -237,14 +249,19 @@ func (r *SQLiteRepository) SaveAlbum(ctx context.Context, album *domain.Album) e
 	album.UpdatedAt = now
 
 	tracksBytes, _ := json.Marshal(album.Tracks)
+	wantedJSON := ""
+	if len(album.WantedTrackIDs) > 0 {
+		b, _ := json.Marshal(album.WantedTrackIDs)
+		wantedJSON = string(b)
+	}
 	monitoredInt := 0
 	if album.Monitored {
 		monitoredInt = 1
 	}
 
 	query := `
-	INSERT INTO albums (id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO albums (id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, wanted_json, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		artist_name = excluded.artist_name,
 		title = excluded.title,
@@ -257,6 +274,7 @@ func (r *SQLiteRepository) SaveAlbum(ctx context.Context, album *domain.Album) e
 		monitored = excluded.monitored,
 		status = excluded.status,
 		tracks_json = excluded.tracks_json,
+		wanted_json = excluded.wanted_json,
 		updated_at = excluded.updated_at;
 	`
 
@@ -276,6 +294,7 @@ func (r *SQLiteRepository) SaveAlbum(ctx context.Context, album *domain.Album) e
 		monitoredInt,
 		string(album.Status),
 		string(tracksBytes),
+		wantedJSON,
 		album.CreatedAt,
 		album.UpdatedAt,
 	)
@@ -283,15 +302,15 @@ func (r *SQLiteRepository) SaveAlbum(ctx context.Context, album *domain.Album) e
 }
 
 func (r *SQLiteRepository) GetAlbum(ctx context.Context, id string) (*domain.Album, error) {
-	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, created_at, updated_at FROM albums WHERE id = ?`
+	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, wanted_json, created_at, updated_at FROM albums WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var a domain.Album
 	var monitoredInt int
 	var relType, status string
-	var tracksJSON sql.NullString
+	var tracksJSON, wantedJSON sql.NullString
 
-	err := row.Scan(&a.ID, &a.ArtistID, &a.ArtistName, &a.Title, &relType, &a.ReleaseDate, &a.Year, &a.CoverURL, &a.TotalTracks, &a.UPC, &a.Source, &a.SourceID, &monitoredInt, &status, &tracksJSON, &a.CreatedAt, &a.UpdatedAt)
+	err := row.Scan(&a.ID, &a.ArtistID, &a.ArtistName, &a.Title, &relType, &a.ReleaseDate, &a.Year, &a.CoverURL, &a.TotalTracks, &a.UPC, &a.Source, &a.SourceID, &monitoredInt, &status, &tracksJSON, &wantedJSON, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -306,12 +325,15 @@ func (r *SQLiteRepository) GetAlbum(ctx context.Context, id string) (*domain.Alb
 	if tracksJSON.Valid && tracksJSON.String != "" {
 		_ = json.Unmarshal([]byte(tracksJSON.String), &a.Tracks)
 	}
+	if wantedJSON.Valid && wantedJSON.String != "" {
+		_ = json.Unmarshal([]byte(wantedJSON.String), &a.WantedTrackIDs)
+	}
 
 	return &a, nil
 }
 
 func (r *SQLiteRepository) ListAlbumsByArtist(ctx context.Context, artistID string) ([]domain.Album, error) {
-	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, created_at, updated_at FROM albums WHERE artist_id = ? ORDER BY year DESC, release_date DESC`
+	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, wanted_json, created_at, updated_at FROM albums WHERE artist_id = ? ORDER BY year DESC, release_date DESC`
 	rows, err := r.db.QueryContext(ctx, query, artistID)
 	if err != nil {
 		return nil, err
@@ -322,7 +344,7 @@ func (r *SQLiteRepository) ListAlbumsByArtist(ctx context.Context, artistID stri
 }
 
 func (r *SQLiteRepository) ListMonitoredAlbums(ctx context.Context) ([]domain.Album, error) {
-	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, created_at, updated_at FROM albums WHERE monitored = 1 ORDER BY year DESC`
+	query := `SELECT id, artist_id, artist_name, title, release_type, release_date, year, cover_url, total_tracks, upc, source, source_id, monitored, status, tracks_json, wanted_json, created_at, updated_at FROM albums WHERE monitored = 1 ORDER BY year DESC`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -338,9 +360,9 @@ func scanAlbums(rows *sql.Rows) ([]domain.Album, error) {
 		var a domain.Album
 		var monitoredInt int
 		var relType, status string
-		var tracksJSON sql.NullString
+		var tracksJSON, wantedJSON sql.NullString
 
-		if err := rows.Scan(&a.ID, &a.ArtistID, &a.ArtistName, &a.Title, &relType, &a.ReleaseDate, &a.Year, &a.CoverURL, &a.TotalTracks, &a.UPC, &a.Source, &a.SourceID, &monitoredInt, &status, &tracksJSON, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.ArtistID, &a.ArtistName, &a.Title, &relType, &a.ReleaseDate, &a.Year, &a.CoverURL, &a.TotalTracks, &a.UPC, &a.Source, &a.SourceID, &monitoredInt, &status, &tracksJSON, &wantedJSON, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		a.ReleaseType = domain.ReleaseType(relType)
@@ -348,6 +370,9 @@ func scanAlbums(rows *sql.Rows) ([]domain.Album, error) {
 		a.Monitored = monitoredInt == 1
 		if tracksJSON.Valid && tracksJSON.String != "" {
 			_ = json.Unmarshal([]byte(tracksJSON.String), &a.Tracks)
+		}
+		if wantedJSON.Valid && wantedJSON.String != "" {
+			_ = json.Unmarshal([]byte(wantedJSON.String), &a.WantedTrackIDs)
 		}
 		albums = append(albums, a)
 	}

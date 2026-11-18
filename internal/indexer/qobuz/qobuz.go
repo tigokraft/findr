@@ -438,3 +438,42 @@ func (c *Client) SearchTrack(ctx context.Context, artist, title string) ([]index
 	}
 	return hits, nil
 }
+
+// GetTrack fetches one track by its Qobuz ID.
+func (c *Client) GetTrack(ctx context.Context, id string) (*indexer.TrackHit, error) {
+	var t struct {
+		ID        int64  `json:"id"`
+		Title     string `json:"title"`
+		Version   string `json:"version"`
+		Duration  int    `json:"duration"`
+		ISRC      string `json:"isrc"`
+		Performer struct {
+			Name string `json:"name"`
+		} `json:"performer"`
+		Album qobuzAlbumItem `json:"album"`
+	}
+	if err := c.getJSON(ctx, "/track/get", url.Values{"track_id": {id}}, &t); err != nil {
+		return nil, err
+	}
+	if t.ID == 0 || t.Album.ID == "" {
+		return nil, nil
+	}
+	name := t.Title
+	if t.Version != "" && !strings.Contains(name, t.Version) {
+		name = fmt.Sprintf("%s (%s)", name, t.Version)
+	}
+	perf := t.Performer.Name
+	if perf == "" {
+		perf = t.Album.Artist.Name
+	}
+	return &indexer.TrackHit{
+		TrackID:     strconv.FormatInt(t.ID, 10),
+		Title:       name,
+		ArtistName:  perf,
+		DurationSec: t.Duration,
+		ISRC:        t.ISRC,
+		AlbumID:     t.Album.ID,
+		AlbumTitle:  t.Album.Title,
+		CoverURL:    t.Album.Image.Large,
+	}, nil
+}

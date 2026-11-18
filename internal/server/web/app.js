@@ -216,6 +216,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   handleRoute();
   refreshQueueBadge();
+  initSearchProvider();
 });
 window.addEventListener('hashchange', handleRoute);
 
@@ -544,7 +545,10 @@ function renderArtistReleases() {
         '</div>' +
         '<div class="album-body"><div class="album-title" title="' + esc(alb.title) + '">' + esc(alb.title) + '</div><div class="album-sub">' + releaseMeta(alb) + '</div>' +
           '<div class="album-actions">' +
-            (preview ? '' : '<button class="btn btn-sm" type="button" onclick="downloadSingleAlbumFromPage(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('download') + (alb.status === 'completed' ? 'Again' : 'Get') + '</button>') +
+            (preview
+              ? '<button class="btn btn-sm" type="button" onclick="trackAlbumFromSearch(\'' + jsq(alb.source || currentArtistData.source) + '\', \'' + jsq(alb.source_id || alb.id) + '\', true, this)">' + ic('download') + 'Get</button>'
+              : '<button class="btn btn-sm" type="button" onclick="downloadSingleAlbumFromPage(\'' + id + '\', \'' + jsq(alb.title) + '\')">' + ic('download') + (alb.status === 'completed' ? 'Again' : 'Get') + '</button>') +
+            '<button class="btn btn-sm btn-icon" type="button" aria-label="Pick tracks from ' + esc(alb.title) + '" title="Pick tracks" onclick="openPickerFromPage(\'' + id + '\')">' + ic('list') + '</button>' +
             '<button class="btn btn-sm btn-icon" type="button" id="page-chevron-' + esc(alb.id) + '" aria-expanded="false" aria-label="Show tracks" title="Tracks" onclick="toggleAlbumTracksFromPage(\'' + id + '\')">' + ic('chev-down', 'chev') + '</button>' +
           '</div>' +
         '</div>' +
@@ -564,6 +568,9 @@ function renderArtistReleases() {
         '<div style="min-width:0"><div class="release-title"><span>' + esc(alb.title) + '</span></div>' +
           '<div class="release-sub">' + releaseMeta(alb) + (alb.release_date ? ' · ' + esc(alb.release_date) : '') + '</div></div>' +
         '<div class="release-ctl" onclick="event.stopPropagation()">' +
+          partialChip(alb) +
+          (preview ? '<button class="btn btn-sm grow" type="button" onclick="trackAlbumFromSearch(\'' + jsq(alb.source || currentArtistData.source) + '\', \'' + jsq(alb.source_id || alb.id) + '\', true, this)">' + ic('download') + 'Get release</button>' : '') +
+          '<button class="btn btn-sm" type="button" onclick="openPickerFromPage(\'' + id + '\')" title="Pick tracks">' + ic('list') + 'Pick tracks</button>' +
           (preview ? '' :
             '<label class="switch-label" title="Monitor this release"><input type="checkbox" ' + (alb.monitored ? 'checked' : '') + ' onchange="toggleAlbumMonitoredFromPage(\'' + id + '\', this.checked)"><span>Monitor</span></label>' +
             statusChip(alb.status) +
@@ -575,6 +582,12 @@ function renderArtistReleases() {
       '<div class="tracks" id="page-tracklist-' + esc(alb.id) + '"></div>' +
     '</div>';
   }).join('') + '</div>';
+}
+
+function openPickerFromPage(albumID) {
+  const alb = currentArtistAlbums.find((a) => a.id === albumID);
+  if (!alb) return;
+  openPickerFor(alb.source || currentArtistData.source || searchProvider, alb.source_id || alb.id);
 }
 
 function toggleSelectAllInPage(checked) {
@@ -770,7 +783,8 @@ function setSearchProvider(p) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', String(on));
   });
-  if ($('searchQueryInput').value.trim()) executeSearch();
+  const q = $('searchQueryInput').value.trim();
+  if (q && !looksLikeLink(q)) executeSearch();
 }
 
 function quickSearch(name) { $('searchQueryInput').value = name; executeSearch(); }
@@ -1607,9 +1621,27 @@ async function openAlbumFiles(albumID) {
   }
 }
 
-/* ───────────── Search: albums ───────────── */
+/* ───────────── Search: releases, tracks, links ───────────── */
 let searchMode = 'artists';
 let lastAlbumResults = [];
+let lastTrackResults = [];
+let searchTypeFilter = 'all';
+
+const SEARCH_COPY = {
+  artists: ['Find an artist and track every release.', 'Artist name, or paste a link',
+    'Search Deezer or Qobuz, or paste a link from Spotify, Apple Music, TIDAL, YouTube Music, Deezer, Qobuz, SoundCloud, Bandcamp or Amazon Music. Open any result to preview it before you add it.'],
+  albums: ['Get one album, EP or single.', 'Release title, optionally with the artist, or paste a link',
+    'Add just the release you want, or pick some of its tracks. The artist joins your library without monitoring, so findr does not pull their whole discography.'],
+  tracks: ['Get a single track.', 'Song title and artist, or paste a link',
+    'findr downloads only the track you pick and files it under the release it comes from. Open the release to pick more of its tracks.']
+};
+
+// A pasted link (any platform) rather than a search query.
+function looksLikeLink(q) {
+  q = q.trim();
+  if (/^(https?:\/\/|spotify:)/i.test(q)) return true;
+  return !/\s/.test(q) && /^([a-z0-9-]+\.)+[a-z]{2,}\/\S+/i.test(q);
+}
 
 function setSearchMode(mode) {
   searchMode = mode;
@@ -1618,76 +1650,426 @@ function setSearchMode(mode) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', String(on));
   });
-  const albums = mode === 'albums';
-  $('searchQueryInput').placeholder = albums ? 'Album title, optionally with the artist' : 'Artist name';
-  $('searchHeadline').textContent = albums ? 'Track a single album.' : 'Find an artist and track every release.';
-  $('searchLead').textContent = albums
-    ? 'Add just the release you want. The artist joins your library without monitoring, so findr does not pull their whole discography.'
-    : 'Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.';
+  const copy = SEARCH_COPY[mode] || SEARCH_COPY.artists;
+  $('searchHeadline').textContent = copy[0];
+  $('searchQueryInput').placeholder = copy[1];
+  $('searchLead').textContent = copy[2];
   $('searchResultsGrid').innerHTML = '';
   $('searchResultsCount').textContent = '';
   $('searchResultsHeader').textContent = 'Results';
-  if ($('searchQueryInput').value.trim()) executeSearch();
-  else $('searchResultsGrid').innerHTML = emptyState(albums ? 'Search to see albums' : 'Search to see artists', albums ? 'Type an album title above.' : 'Type a name above. Open a result to preview its releases before you add it.');
+  $('searchTypeSeg').hidden = true;
+  const q = $('searchQueryInput').value.trim();
+  if (q && !looksLikeLink(q)) { $('linkResult').innerHTML = ''; executeSearch(); return; }
+  if (q) return;
+  $('linkResult').innerHTML = '';
+  const empty = {
+    artists: ['Search to see artists', 'Type a name above, or paste an artist link. Open a result to preview its releases before you add it.'],
+    albums: ['Search to see releases', 'Type an album, EP or single title above, or paste a release link.'],
+    tracks: ['Search to see tracks', 'Type a song title above, or paste a track link.']
+  }[mode];
+  $('searchResultsGrid').innerHTML = emptyState(empty[0], empty[1]);
 }
 
 function executeSearch() {
+  const q = $('searchQueryInput').value.trim();
+  if (q && looksLikeLink(q)) return resolveLinkSearch(q);
+  $('linkResult').innerHTML = '';
   if (searchMode === 'albums') return executeAlbumSearch();
+  if (searchMode === 'tracks') return executeTrackSearch();
   return executeArtistSearch();
+}
+
+async function initSearchProvider() {
+  try {
+    if (!currentConfig) currentConfig = await (await fetch('/api/config')).json();
+    const p = currentConfig && currentConfig.indexer && currentConfig.indexer.default_provider;
+    if (p === 'deezer' || p === 'qobuz') {
+      searchProvider = p;
+      document.querySelectorAll('#searchProviderSeg button').forEach((b) => {
+        const on = b.dataset.provider === p;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+    }
+  } catch (e) { /* keep Deezer */ }
 }
 
 async function executeAlbumSearch() {
   const q = $('searchQueryInput').value.trim();
   if (!q) { $('searchQueryInput').focus(); return; }
   const grid = $('searchResultsGrid');
-  $('searchResultsHeader').textContent = 'Albums for “' + q + '”';
-  $('searchResultsCount').textContent = 'searching';
+  $('searchResultsHeader').textContent = 'Releases for “' + q + '”';
+  $('searchResultsCount').textContent = 'searching ' + searchProvider;
+  $('searchTypeSeg').hidden = true;
   grid.innerHTML = '<div class="tracks-note" style="grid-column:1/-1">Searching the catalog</div>';
   try {
-    lastAlbumResults = (await api('/api/search/albums?q=' + encodeURIComponent(q))) || [];
-    $('searchResultsCount').textContent = plural(lastAlbumResults.length, 'release');
+    lastAlbumResults = (await api('/api/search/albums?q=' + encodeURIComponent(q) + '&provider=' + searchProvider)) || [];
+    searchTypeFilter = 'all';
     renderAlbumResults();
   } catch (err) {
     $('searchResultsCount').textContent = '';
-    grid.innerHTML = emptyState('Album search failed', esc(err.message), '<button class="btn" type="button" onclick="executeAlbumSearch()">' + ic('refresh') + 'Try again</button>', true);
+    grid.innerHTML = emptyState('Release search failed', esc(err.message), '<button class="btn" type="button" onclick="executeAlbumSearch()">' + ic('refresh') + 'Try again</button>', true);
   }
+}
+
+function setSearchTypeFilter(t) { searchTypeFilter = t; renderAlbumResults(); }
+
+function partialChip(alb) {
+  const n = (alb.wanted_track_ids || []).length;
+  if (!n) return '';
+  const total = (alb.tracks && alb.tracks.length) || alb.total_tracks || 0;
+  return '<span class="chip chip-partial" title="Only these tracks are downloaded">' + n + (total ? ' of ' + total : '') + ' tracks</span>';
 }
 
 function renderAlbumResults() {
   const grid = $('searchResultsGrid');
-  if (!lastAlbumResults.length) {
-    grid.innerHTML = emptyState('No album found', 'Check the spelling, or add the artist name to the query.');
-    return;
-  }
-  grid.innerHTML = '<div class="albums" style="grid-column:1/-1">' + lastAlbumResults.map((alb) => {
-    const id = jsq(alb.id);
-    const tracked = alb.in_library && alb.monitored;
-    const actions = tracked
-      ? '<button class="btn btn-sm" type="button" onclick="openArtistPage(\'' + jsq(alb.artist_id) + '\')">' + ic('chev-right') + 'Artist</button>'
-      : '<button class="btn btn-sm" type="button" onclick="trackAlbumFromSearch(\'' + id + '\', false, this)">' + ic('plus') + 'Track</button>' +
-        '<button class="btn btn-sm btn-mint" type="button" onclick="trackAlbumFromSearch(\'' + id + '\', true, this)" title="Track and download">' + ic('download') + 'Get</button>';
+  const seg = $('searchTypeSeg');
+  const counts = { all: lastAlbumResults.length, album: 0, ep: 0, single: 0, other: 0 };
+  lastAlbumResults.forEach((a) => { const t = typeOf(a); if (t in counts && t !== 'all') counts[t]++; else counts.other++; });
+  const tabs = [['all', 'All'], ['album', 'Albums'], ['ep', 'EPs'], ['single', 'Singles']];
+  if (counts.other) tabs.push(['other', 'Other']);
+  seg.hidden = !lastAlbumResults.length;
+  seg.innerHTML = tabs.map(([k, label]) =>
+    '<button type="button" role="radio" aria-checked="' + (searchTypeFilter === k) + '" class="' + (searchTypeFilter === k ? 'active' : '') + '" onclick="setSearchTypeFilter(\'' + k + '\')">' + label + '<span class="count">' + counts[k] + '</span></button>').join('');
+
+  let list = lastAlbumResults;
+  if (searchTypeFilter === 'other') list = list.filter((a) => !['album', 'ep', 'single'].includes(typeOf(a)));
+  else if (searchTypeFilter !== 'all') list = list.filter((a) => typeOf(a) === searchTypeFilter);
+  $('searchResultsCount').textContent = plural(list.length, 'release') + ' on ' + searchProvider;
+
+  if (!lastAlbumResults.length) { grid.innerHTML = emptyState('No release found', 'Check the spelling, add the artist name, or switch catalog.'); return; }
+  if (!list.length) { grid.innerHTML = emptyState('No ' + searchTypeFilter + ' in these results', 'Pick another type above.'); return; }
+
+  grid.innerHTML = '<div class="albums" style="grid-column:1/-1">' + list.map((alb) => {
+    const src = jsq(alb.source || searchProvider);
+    const sid = jsq(alb.source_id || alb.id);
+    const done = alb.in_library && alb.status === 'completed' && !(alb.wanted_track_ids || []).length;
+    const pick = '<button class="btn btn-sm btn-icon" type="button" title="Pick tracks" aria-label="Pick tracks from ' + esc(alb.title) + '" onclick="openPickerFor(\'' + src + '\', \'' + sid + '\')">' + ic('list') + '</button>';
+    const actions = done
+      ? '<button class="btn btn-sm" type="button" onclick="openArtistPage(\'' + jsq(alb.artist_id) + '\')">' + ic('chev-right') + 'Artist</button>' + pick
+      : '<button class="btn btn-sm btn-mint" type="button" onclick="trackAlbumFromSearch(\'' + src + '\', \'' + sid + '\', true, this)" title="Track and download the whole release">' + ic('download') + 'Get</button>' +
+        (alb.in_library && alb.monitored ? '' : '<button class="btn btn-sm btn-icon" type="button" title="Track without downloading" aria-label="Track ' + esc(alb.title) + '" onclick="trackAlbumFromSearch(\'' + src + '\', \'' + sid + '\', false, this)">' + ic('plus') + '</button>') + pick;
     return '<div class="album">' +
-      '<div class="album-art">' + imgTag(alb.cover_url, '', alb.title) + (alb.in_library ? statusChip(alb.status) : '') + '</div>' +
+      '<div class="album-art" style="cursor:pointer" onclick="openPickerFor(\'' + src + '\', \'' + sid + '\')">' + imgTag(alb.cover_url, '', alb.title) + (alb.in_library ? statusChip(alb.status) : '') + '</div>' +
       '<div class="album-body"><div class="album-title" title="' + esc(alb.title) + '">' + esc(alb.title) + '</div>' +
         '<div class="album-sub">' + esc(alb.artist_name || '—') + '</div>' +
         '<div class="album-sub">' + releaseMeta(alb) + '</div>' +
+        (partialChip(alb) ? '<div style="margin-top:6px">' + partialChip(alb) + '</div>' : '') +
         '<div class="album-actions">' + actions + '</div>' +
       '</div>' +
     '</div>';
   }).join('') + '</div>';
 }
 
-async function trackAlbumFromSearch(id, download, btn) {
+async function trackAlbumFromSearch(source, sourceID, download, btn) {
   setBusy(btn, true, download ? 'Queueing' : 'Adding');
   try {
-    const data = await api('/api/albums', { method: 'POST', json: { source_id: id, download: download } });
-    showToast(data.message || 'Album tracked', 'success');
-    const a = lastAlbumResults.find((x) => x.id === id);
-    if (a && data.album) Object.assign(a, { in_library: true, monitored: true, status: data.album.status, artist_id: data.album.artist_id });
-    libraryLoaded = false;
-    trackedAlbums = [];
+    const data = await api('/api/albums', { method: 'POST', json: { source: source, source_id: sourceID, download: download } });
+    showToast(data.message || 'Release tracked', 'success');
+    applyAddedAlbum(source, sourceID, data.album);
     if (download) refreshQueueBadge();
-    renderAlbumResults();
+  } catch (err) {
+    setBusy(btn, false);
+    showToast(err.message, 'error');
+  }
+}
+
+// Reflect a tracked release in whatever is on screen.
+function applyAddedAlbum(source, sourceID, album) {
+  libraryLoaded = false;
+  trackedAlbums = [];
+  if (!album) return;
+  const a = lastAlbumResults.find((x) => (x.source_id || x.id) === sourceID && (x.source || searchProvider) === source);
+  if (a) Object.assign(a, { in_library: true, monitored: true, status: album.status, artist_id: album.artist_id, wanted_track_ids: album.wanted_track_ids || [] });
+  if (currentView === 'search' && searchMode === 'albums' && lastAlbumResults.length) renderAlbumResults();
+  if (currentView === 'artist' && !isArtistPreviewMode && currentArtistData) reloadCurrentArtistPage();
+}
+
+async function executeTrackSearch() {
+  const q = $('searchQueryInput').value.trim();
+  if (!q) { $('searchQueryInput').focus(); return; }
+  const grid = $('searchResultsGrid');
+  $('searchResultsHeader').textContent = 'Tracks for “' + q + '”';
+  $('searchResultsCount').textContent = 'searching ' + searchProvider;
+  grid.innerHTML = '<div class="tracks-note" style="grid-column:1/-1">Searching the catalog</div>';
+  try {
+    lastTrackResults = (await api('/api/search/tracks?q=' + encodeURIComponent(q) + '&provider=' + searchProvider)) || [];
+    renderTrackResults();
+  } catch (err) {
+    $('searchResultsCount').textContent = '';
+    grid.innerHTML = emptyState('Track search failed', esc(err.message), '<button class="btn" type="button" onclick="executeTrackSearch()">' + ic('refresh') + 'Try again</button>', true);
+  }
+}
+
+function renderTrackResults() {
+  const grid = $('searchResultsGrid');
+  $('searchResultsCount').textContent = plural(lastTrackResults.length, 'track') + ' on ' + searchProvider;
+  if (!lastTrackResults.length) { grid.innerHTML = emptyState('No track found', 'Add the artist name, or switch catalog.'); return; }
+  grid.innerHTML = '<div class="rows" style="grid-column:1/-1">' + lastTrackResults.map((t) => {
+    const src = jsq(t.source || searchProvider);
+    const alb = jsq(t.album_id);
+    const tid = jsq(t.track_id);
+    return '<div class="row track-hit">' +
+      imgTag(t.cover_url, 'thumb', '') +
+      '<div style="min-width:0"><div class="row-title">' + esc(t.title) + '</div>' +
+        '<div class="row-sub">' + esc(t.artist_name) + ' · ' + esc(t.album_title) + '</div></div>' +
+      '<span class="t-dur">' + formatDuration(t.duration_sec) + '</span>' +
+      '<div class="hit-acts">' +
+        '<button class="btn btn-sm btn-mint" type="button" onclick="getTrackFromSearch(\'' + src + '\', \'' + alb + '\', \'' + tid + '\', this)">' + ic('download') + 'Get</button>' +
+        '<button class="btn btn-sm btn-icon" type="button" title="Open the release" aria-label="Open the release ' + esc(t.album_title) + '" onclick="openPickerFor(\'' + src + '\', \'' + alb + '\', \'' + tid + '\')">' + ic('disc') + '</button>' +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+}
+
+async function getTrackFromSearch(source, albumID, trackID, btn) {
+  setBusy(btn, true, 'Queueing');
+  try {
+    const data = await api('/api/albums', { method: 'POST', json: { source: source, source_id: albumID, track_ids: [trackID], download: true } });
+    showToast(data.message || 'Track queued', 'success');
+    refreshQueueBadge();
+    setBusy(btn, false);
+    btn.innerHTML = ic('check') + 'Queued';
+    btn.disabled = true;
+  } catch (err) {
+    setBusy(btn, false);
+    showToast(err.message, 'error');
+  }
+}
+
+/* links */
+let lastLinkResolution = null;
+
+async function resolveLinkSearch(url) {
+  const box = $('linkResult');
+  const grid = $('searchResultsGrid');
+  $('searchTypeSeg').hidden = true;
+  $('searchResultsHeader').textContent = 'Link';
+  $('searchResultsCount').textContent = 'looking it up';
+  grid.innerHTML = '';
+  box.innerHTML = '<div class="tracks-note"><span class="pulse" style="display:inline-block;vertical-align:middle;margin-right:10px"></span>Reading the link</div>';
+  try {
+    const r = await api('/api/resolve?url=' + encodeURIComponent(url));
+    lastLinkResolution = r;
+    $('searchResultsCount').textContent = r.platform_name ? 'from ' + r.platform_name : '';
+    renderLinkResult(r);
+  } catch (err) {
+    $('searchResultsCount').textContent = '';
+    box.innerHTML = emptyState('That link could not be used', esc(err.message), '', true);
+  }
+}
+
+function renderLinkResult(r) {
+  const box = $('linkResult');
+  const from = r.platform_name || 'the link';
+  const matchedNote = r.matched
+    ? '<div class="row-sub" style="color:var(--peach)">' + ic('info') + ' Matched by name from ' + esc(from) + (r.query ? ' (“' + esc(r.query) + '”)' : '') + '. Check it is the right one.</div>'
+    : '<div class="row-sub">From ' + esc(from) + '</div>';
+
+  if (r.kind === 'playlist') {
+    box.innerHTML = '<div class="link-card">' +
+      '<span class="stat-icon" style="width:72px;height:72px;border-radius:14px">' + ic('playlist') + '</span>' +
+      '<div style="min-width:0"><div class="row-title">Spotify playlist</div><div class="row-sub">Playlists are imported on the Playlists page, where you pick which releases to keep.</div></div>' +
+      '<div class="link-acts"><button class="btn btn-mint" type="button" onclick="openPlaylistImport(\'' + jsq(r.url) + '\')">' + ic('playlist') + 'Import playlist</button></div>' +
+    '</div>';
+    return;
+  }
+
+  if (r.kind === 'artist' && r.artist) {
+    const a = r.artist;
+    const payload = jsq(encodeURIComponent(JSON.stringify(a)));
+    const inLib = a.monitored && a.id;
+    box.innerHTML = '<div class="link-card round">' + imgTag(a.image_url, '', a.name) +
+      '<div style="min-width:0"><p class="eyebrow" style="margin:0 0 4px">Artist · ' + esc(a.source || '') + '</p><div class="row-title">' + esc(a.name) + '</div>' + matchedNote + '</div>' +
+      '<div class="link-acts">' +
+        (inLib
+          ? '<button class="btn btn-mint" type="button" onclick="openArtistPage(\'' + jsq(a.id) + '\')">' + ic('chev-right') + 'Open in library</button>'
+          : '<button class="btn btn-mint" type="button" onclick="openArtistPreviewPage(\'' + jsq(a.source_id) + '\', \'' + payload + '\')">' + ic('eye') + 'Preview releases</button>' +
+            '<button class="btn" type="button" onclick="addArtistFromSearch(\'' + payload + '\', false)">' + ic('plus') + 'Add and monitor</button>') +
+      '</div></div>';
+    return;
+  }
+
+  if (r.album) {
+    const alb = r.album;
+    const src = jsq(alb.source);
+    const sid = jsq(alb.source_id);
+    const track = r.track_id ? (alb.tracks || []).find((t) => t.id === r.track_id) : null;
+    const title = track ? track.title : alb.title;
+    const sub = track ? alb.artist_name + ' · from ' + alb.title : alb.artist_name + ' · ' + typeOf(alb) + (alb.year ? ' · ' + alb.year : '');
+    box.innerHTML = '<div class="link-card">' + imgTag(alb.cover_url, '', alb.title) +
+      '<div style="min-width:0"><p class="eyebrow" style="margin:0 0 4px">' + (track ? 'Track' : esc(typeOf(alb))) + ' · ' + esc(alb.source || '') + '</p><div class="row-title">' + esc(title) + '</div>' +
+        '<div class="row-sub">' + esc(sub) + '</div>' + matchedNote + '</div>' +
+      '<div class="link-acts">' +
+        (track
+          ? '<button class="btn btn-mint" type="button" onclick="getTrackFromSearch(\'' + src + '\', \'' + sid + '\', \'' + jsq(track.id) + '\', this)">' + ic('download') + 'Get track</button>' +
+            '<button class="btn" type="button" onclick="openPickerFor(\'' + src + '\', \'' + sid + '\', \'' + jsq(track.id) + '\')">' + ic('list') + 'Pick from release</button>'
+          : '<button class="btn btn-mint" type="button" onclick="trackAlbumFromSearch(\'' + src + '\', \'' + sid + '\', true, this)">' + ic('download') + 'Get ' + esc(typeOf(alb) === 'album' ? 'album' : typeOf(alb)) + '</button>' +
+            '<button class="btn" type="button" onclick="openPickerFor(\'' + src + '\', \'' + sid + '\')">' + ic('list') + 'Pick tracks</button>') +
+      '</div></div>';
+    pickerCache[alb.source + ':' + alb.source_id] = alb;
+    return;
+  }
+  box.innerHTML = emptyState('Nothing found for that link', 'findr could not match it in the catalog.', '', true);
+}
+
+function openPlaylistImport(url) {
+  go('playlists');
+  setTimeout(() => {
+    if (typeof showPlaylistList === 'function') showPlaylistList();
+    const inp = $('playlistUrlInput');
+    if (inp) { inp.value = url; previewSpotifyPlaylist(); }
+  }, 80);
+}
+
+/* track picker */
+const pickerCache = {};
+let pickerAlbum = null;
+let pickerSelected = new Set();
+
+function closePicker() {
+  const d = $('pickerDialog');
+  if (d.open) d.close();
+  pickerAlbum = null;
+}
+
+// Open the picker for a catalog release. preselectTrackID narrows the
+// selection to one track (from a track link or track search).
+async function openPickerFor(source, sourceID, preselectTrackID) {
+  const d = $('pickerDialog');
+  $('pickerCover').src = PH_ART;
+  $('pickerEyebrow').textContent = 'Release';
+  $('pickerTitle').textContent = 'Loading';
+  $('pickerSub').textContent = '';
+  $('pickerNote').hidden = true;
+  $('pickerTools').hidden = true;
+  $('pickerFoot').hidden = true;
+  $('pickerBody').innerHTML = '<div class="tracks-note"><span class="pulse" style="display:inline-block;vertical-align:middle;margin-right:10px"></span>Fetching the tracklist</div>';
+  if (!d.open) d.showModal();
+
+  try {
+    const key = source + ':' + sourceID;
+    let alb = pickerCache[key];
+    if (!alb || !(alb.tracks || []).length) {
+      alb = await api('/api/catalog/album?source=' + encodeURIComponent(source) + '&id=' + encodeURIComponent(sourceID));
+      pickerCache[key] = alb;
+    }
+    pickerAlbum = alb;
+    const tracks = alb.tracks || [];
+    const wanted = alb.wanted_track_ids || [];
+    if (preselectTrackID) pickerSelected = new Set([preselectTrackID]);
+    else if (wanted.length) pickerSelected = new Set(wanted);
+    else pickerSelected = new Set(tracks.map((t) => t.id));
+    renderPicker();
+  } catch (err) {
+    $('pickerTitle').textContent = 'The release did not load';
+    $('pickerBody').innerHTML = emptyState('Could not fetch the tracklist', esc(err.message), '', true);
+  }
+}
+
+function renderPicker() {
+  const alb = pickerAlbum;
+  if (!alb) return;
+  const tracks = alb.tracks || [];
+  const cover = $('pickerCover');
+  cover.src = alb.cover_url || PH_ART;
+  cover.alt = alb.title;
+  $('pickerEyebrow').textContent = typeOf(alb) + ' · ' + (alb.source || '');
+  $('pickerTitle').textContent = alb.title;
+  $('pickerSub').textContent = [alb.artist_name, alb.year || alb.release_date, plural(tracks.length, 'track')].filter(Boolean).join(' · ');
+
+  const note = $('pickerNote');
+  const wanted = alb.wanted_track_ids || [];
+  if (alb.in_library && alb.status === 'completed' && !wanted.length) {
+    note.className = 'picker-note';
+    note.innerHTML = ic('check') + '<span>The whole release is already in your library.</span>';
+    note.hidden = false;
+  } else if (alb.in_library && wanted.length) {
+    note.className = 'picker-note';
+    note.innerHTML = ic('info') + '<span>' + plural(wanted.length, 'track') + ' of this release ' + (wanted.length === 1 ? 'is' : 'are') + ' tracked. Tracks you add here join them.</span>';
+    note.hidden = false;
+  } else {
+    note.hidden = true;
+  }
+
+  if (!tracks.length) {
+    $('pickerBody').innerHTML = '<div class="tracks-note">No tracklist in the catalog. You can still get the whole release.</div>';
+    $('pickerTools').hidden = true;
+    $('pickerFoot').hidden = false;
+    updatePickerFoot();
+    return;
+  }
+
+  const discs = new Set(tracks.map((t) => t.disc_number || 1));
+  const multiDisc = discs.size > 1;
+  const wantedSet = new Set(wanted);
+  let lastDisc = null;
+  let html = '<div class="tracklist" role="group" aria-label="Tracks">';
+  tracks.forEach((t, idx) => {
+    const disc = t.disc_number || 1;
+    if (multiDisc && disc !== lastDisc) { html += '<div class="picker-disc">Disc ' + disc + '</div>'; lastDisc = disc; }
+    const n = t.track_number || (idx + 1);
+    const on = pickerSelected.has(t.id);
+    const have = alb.in_library && alb.status === 'completed' && (!wanted.length || wantedSet.has(t.id));
+    html += '<label class="pick-row' + (on ? '' : ' off') + '">' +
+      '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="pickerToggle(\'' + jsq(t.id) + '\', this.checked)" aria-label="' + esc(t.title) + '">' +
+      '<span class="t-no">' + esc(n < 10 ? '0' + n : n) + '</span>' +
+      '<span class="t-title"><span>' + esc(t.title) + '</span>' +
+        (t.artist_name && t.artist_name !== alb.artist_name ? '<span class="t-isrc" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(t.artist_name) + '</span>' : '') +
+        (t.explicit ? '<span class="e-tag" title="Explicit">E</span>' : '') +
+        (have ? '<span class="chip chip-mint">In library</span>' : '') + '</span>' +
+      '<span class="t-dur">' + formatDuration(t.duration_sec) + '</span>' +
+    '</label>';
+  });
+  html += '</div>';
+  $('pickerBody').innerHTML = html;
+  $('pickerTools').hidden = false;
+  $('pickerFoot').hidden = false;
+  updatePickerFoot();
+}
+
+function pickerToggle(id, on) {
+  if (on) pickerSelected.add(id); else pickerSelected.delete(id);
+  const inputs = $('pickerBody').querySelectorAll('.pick-row');
+  inputs.forEach((row) => { const cb = row.querySelector('input'); row.classList.toggle('off', !cb.checked); });
+  updatePickerFoot();
+}
+
+function pickerToggleAll(on) {
+  const tracks = (pickerAlbum && pickerAlbum.tracks) || [];
+  pickerSelected = new Set(on ? tracks.map((t) => t.id) : []);
+  renderPicker();
+}
+
+function updatePickerFoot() {
+  const tracks = (pickerAlbum && pickerAlbum.tracks) || [];
+  const n = pickerSelected.size;
+  const all = tracks.length === 0 || n === tracks.length;
+  const allBox = $('pickerAll');
+  allBox.checked = tracks.length > 0 && n === tracks.length;
+  allBox.indeterminate = n > 0 && n < tracks.length;
+  $('pickerCount').textContent = tracks.length ? n + ' of ' + tracks.length + ' selected' : '';
+  const kind = pickerAlbum ? typeOf(pickerAlbum) : 'release';
+  $('pickerGetLabel').textContent = all ? 'Download ' + (kind === 'album' ? 'album' : kind === 'ep' ? 'EP' : kind) : n === 1 ? 'Download 1 track' : 'Download ' + n + ' tracks';
+  $('pickerGetBtn').disabled = n === 0 && tracks.length > 0;
+  $('pickerTrackBtn').disabled = n === 0 && tracks.length > 0;
+}
+
+async function pickerSubmit(download) {
+  const alb = pickerAlbum;
+  if (!alb) return;
+  const tracks = alb.tracks || [];
+  const ids = pickerSelected.size === tracks.length ? [] : Array.from(pickerSelected);
+  const btn = download ? $('pickerGetBtn') : $('pickerTrackBtn');
+  setBusy(btn, true, download ? 'Queueing' : 'Adding');
+  try {
+    const data = await api('/api/albums', { method: 'POST', json: { source: alb.source, source_id: alb.source_id, track_ids: ids, download: download } });
+    showToast(data.message || 'Release tracked', 'success');
+    delete pickerCache[alb.source + ':' + alb.source_id];
+    applyAddedAlbum(alb.source, alb.source_id, data.album);
+    if (download) refreshQueueBadge();
+    setBusy(btn, false);
+    closePicker();
   } catch (err) {
     setBusy(btn, false);
     showToast(err.message, 'error');

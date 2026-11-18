@@ -81,10 +81,9 @@ type ArtistDownloadSummary struct {
 }
 
 // SearchArtists searches artists on the indexer and identifies if they are already in the database.
-func (o *Orchestrator) SearchArtists(ctx context.Context, query string) ([]domain.Artist, error) {
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
+// source picks the catalog ("deezer", "qobuz"); empty uses the default indexer.
+func (o *Orchestrator) SearchArtists(ctx context.Context, source, query string) ([]domain.Artist, error) {
+	idx := o.indexerFor(source)
 
 	artists, err := idx.SearchArtist(ctx, query)
 	if err != nil {
@@ -93,15 +92,21 @@ func (o *Orchestrator) SearchArtists(ctx context.Context, query string) ([]domai
 
 	monitored, err := o.repo.ListArtists(ctx)
 	if err == nil {
-		monitoredMap := make(map[string]bool)
+		inLibrary := make(map[string]bool)
 		for _, m := range monitored {
-			monitoredMap[m.ID] = true
+			src := strings.ToLower(m.Source)
+			inLibrary[src+"|"+m.ID] = true
 			if m.SourceID != "" {
-				monitoredMap[m.SourceID] = true
+				inLibrary[src+"|"+m.SourceID] = true
 			}
 		}
 		for i := range artists {
-			if monitoredMap[artists[i].ID] || monitoredMap[artists[i].SourceID] {
+			src := strings.ToLower(artists[i].Source)
+			if src == "" {
+				src = idx.Name()
+				artists[i].Source = src
+			}
+			if inLibrary[src+"|"+artists[i].ID] || inLibrary[src+"|"+artists[i].SourceID] {
 				artists[i].Monitored = true
 			}
 		}
@@ -111,19 +116,40 @@ func (o *Orchestrator) SearchArtists(ctx context.Context, query string) ([]domai
 }
 
 // GetArtistReleasesFromIndexer fetches discography directly from the indexer for previewing.
-func (o *Orchestrator) GetArtistReleasesFromIndexer(ctx context.Context, artistID string) ([]domain.Album, error) {
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
-
-	return idx.GetArtistReleases(ctx, artistID, indexer.ReleaseFilter{Limit: 100})
+func (o *Orchestrator) GetArtistReleasesFromIndexer(ctx context.Context, source, artistID string) ([]domain.Album, error) {
+	idx := o.indexerFor(source)
+	releases, err := idx.GetArtistReleases(ctx, artistID, indexer.ReleaseFilter{Limit: 100})
+	if err != nil {
+		return nil, err
+	}
+	for i := range releases {
+		if releases[i].Source == "" {
+			releases[i].Source = idx.Name()
+		}
+		if releases[i].SourceID == "" {
+			releases[i].SourceID = releases[i].ID
+		}
+	}
+	return releases, nil
 }
 
 // AddArtist adds a selected artist, indexes their releases, and optionally triggers batch download.
 func (o *Orchestrator) AddArtist(ctx context.Context, artist *domain.Artist, monitor bool, downloadAll bool) (*domain.Artist, []domain.Album, error) {
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
+	idx := o.indexerFor(artist.Source)
+	if artist.Source == "" {
+		artist.Source = idx.Name()
+	}
+	if artist.SourceID == "" {
+		artist.SourceID = artist.ID
+	}
+	if artist.ID == "" || artist.ID == artist.SourceID {
+		if existing, err := o.lookupArtist(ctx, artist.Source, artist.SourceID); err == nil && existing != nil {
+			artist.ID = existing.ID
+			artist.CreatedAt = existing.CreatedAt
+		} else {
+			artist.ID = o.libraryID(artist.Source, artist.SourceID)
+		}
+	}
 
 	if (artist.Name == "" || artist.ImageURL == "") && artist.SourceID != "" {
 		fetched, err := idx.GetArtist(ctx, artist.SourceID)
@@ -139,9 +165,6 @@ func (o *Orchestrator) AddArtist(ctx context.Context, artist *domain.Artist, mon
 			}
 		}
 	}
-	if artist.ID == "" {
-		artist.ID = artist.SourceID
-	}
 	artist.Monitored = monitor
 
 	if err := o.repo.SaveArtist(ctx, artist); err != nil {
@@ -156,15 +179,28 @@ func (o *Orchestrator) AddArtist(ctx context.Context, artist *domain.Artist, mon
 
 	for i := range releases {
 		rel := &releases[i]
+		if rel.Source == "" {
+			rel.Source = idx.Name()
+		}
+		if rel.SourceID == "" {
+			rel.SourceID = rel.ID
+		}
+		existing, _ := o.lookupAlbum(ctx, rel.Source, rel.SourceID)
+		if existing != nil {
+			rel.ID = existing.ID
+		} else {
+			rel.ID = o.libraryID(rel.Source, rel.SourceID)
+		}
 		rel.ArtistID = artist.ID
 		rel.ArtistName = artist.Name
 		rel.Monitored = monitor
 		// Re-indexing an artist (e.g. the 6-hourly sync) must not reset what the
 		// library already knows: download status, the user's monitor choice and
 		// the cached tracklist would otherwise be overwritten by indexer defaults.
-		if existing, err := o.repo.GetAlbum(ctx, rel.ID); err == nil && existing != nil {
+		if existing != nil {
 			rel.Status = existing.Status
 			rel.Monitored = existing.Monitored
+			rel.WantedTrackIDs = existing.WantedTrackIDs
 			if len(rel.Tracks) == 0 {
 				rel.Tracks = existing.Tracks
 			}
@@ -288,7 +324,7 @@ func (o *Orchestrator) DownloadArtistReleases(ctx context.Context, artistID stri
 
 // SearchAndAddArtist finds the first matching artist and adds them.
 func (o *Orchestrator) SearchAndAddArtist(ctx context.Context, query string) (*domain.Artist, []domain.Album, error) {
-	artists, err := o.SearchArtists(ctx, query)
+	artists, err := o.SearchArtists(ctx, "", query)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -315,8 +351,8 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		return nil, nil, fmt.Errorf("album %s not found in repository", albumID)
 	}
 
+	idx := o.indexerFor(album.Source)
 	o.mu.RLock()
-	idx := o.indexer
 	dl := o.downloader
 	vr := o.verifier
 	imp := o.importer
@@ -350,6 +386,15 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		if album.Tracks[i].DiscNumber <= 0 {
 			album.Tracks[i].DiscNumber = 1
 		}
+	}
+
+	// Only the picked tracks are downloaded and verified for a partial release;
+	// the stored record keeps the full tracklist.
+	work := *album
+	if album.IsPartial() {
+		work.Tracks = album.WantedTracks()
+		work.TotalTracks = len(work.Tracks)
+		fmt.Printf("[findr Pipeline] '%s - %s': %d of %d tracks picked\n", album.ArtistName, album.Title, len(work.Tracks), len(album.Tracks))
 	}
 
 	// 2. Download release into staging folder
@@ -394,7 +439,7 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		}
 	}
 
-	dlResult, err := dl.Download(ctx, album, stagingDir, trackedProgress)
+	dlResult, err := dl.Download(ctx, &work, stagingDir, trackedProgress)
 	if err != nil {
 		album.Status = domain.StatusFailed
 		downloadJob.Status = domain.StatusFailed
@@ -436,7 +481,7 @@ func (o *Orchestrator) ProcessAlbumPipelineWithJob(ctx context.Context, albumID 
 		return nil, nil, fmt.Errorf("scan candidates: %w", err)
 	}
 
-	matchResult, err := vr.VerifyAlbum(ctx, album, candidates)
+	matchResult, err := vr.VerifyAlbum(ctx, &work, candidates)
 	if err != nil {
 		album.Status = domain.StatusFailed
 		downloadJob.Status = domain.StatusFailed
@@ -749,10 +794,7 @@ func (o *Orchestrator) EnsureAlbumTracks(ctx context.Context, albumID string) (*
 		return album, nil
 	}
 
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
-
+	idx := o.indexerFor(album.Source)
 	if idx == nil {
 		return album, nil
 	}

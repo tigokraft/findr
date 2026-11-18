@@ -19,10 +19,8 @@ type AlbumSearchResult struct {
 }
 
 // SearchAlbums searches the active indexer for releases by title.
-func (o *Orchestrator) SearchAlbums(ctx context.Context, query string) ([]AlbumSearchResult, error) {
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
+func (o *Orchestrator) SearchAlbums(ctx context.Context, source, query string) ([]AlbumSearchResult, error) {
+	idx := o.indexerFor(source)
 
 	searcher, ok := idx.(indexer.AlbumSearcher)
 	if !ok {
@@ -36,8 +34,12 @@ func (o *Orchestrator) SearchAlbums(ctx context.Context, query string) ([]AlbumS
 	results := make([]AlbumSearchResult, 0, len(albums))
 	for _, a := range albums {
 		r := AlbumSearchResult{Album: a}
-		if existing, err := o.repo.GetAlbum(ctx, a.ID); err == nil && existing != nil {
+		if r.Source == "" {
+			r.Source = idx.Name()
+		}
+		if existing, err := o.lookupAlbum(ctx, r.Source, r.SourceID); err == nil && existing != nil {
 			r.InLibrary = true
+			r.WantedTrackIDs = existing.WantedTrackIDs
 			r.Status = existing.Status
 			r.Monitored = existing.Monitored
 			r.ArtistID = existing.ArtistID
@@ -50,25 +52,40 @@ func (o *Orchestrator) SearchAlbums(ctx context.Context, query string) ([]AlbumS
 	return results, nil
 }
 
-// AddAlbum tracks a single release without following the rest of the artist's
-// discography. The artist is created unmonitored if it is not in the library yet,
-// so the scheduler will not index their other releases. When download is true and
-// the release is not already on disk it is queued.
+// AddAlbum tracks a whole release from the default indexer. See AddRelease.
 func (o *Orchestrator) AddAlbum(ctx context.Context, sourceID string, download bool) (*domain.Album, error) {
-	o.mu.RLock()
-	idx := o.indexer
-	o.mu.RUnlock()
+	return o.AddRelease(ctx, AddReleaseRequest{SourceID: sourceID, Download: download})
+}
 
-	sourceID = strings.TrimSpace(sourceID)
+// AddRelease tracks a single release, or only some of its tracks, without
+// following the rest of the artist's discography. The artist is created
+// unmonitored if it is not in the library yet, so the scheduler will not index
+// their other releases. When Download is true and the wanted tracks are not
+// already on disk the release is queued.
+func (o *Orchestrator) AddRelease(ctx context.Context, req AddReleaseRequest) (*domain.Album, error) {
+	sourceID := strings.TrimSpace(req.SourceID)
 	if sourceID == "" {
 		return nil, fmt.Errorf("album id is required")
 	}
+	idx := o.indexerFor(req.Source)
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	if source == "" {
+		source = idx.Name()
+	}
+	picked := dedupe(req.TrackIDs)
 
-	album, err := o.repo.GetAlbum(ctx, sourceID)
+	album, err := o.lookupAlbum(ctx, source, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("look up album %s: %w", sourceID, err)
 	}
+	if album == nil && source == idx.Name() {
+		// Records saved before catalog-qualified IDs used the bare ID.
+		if a, err := o.repo.GetAlbum(ctx, sourceID); err == nil && a != nil {
+			album = a
+		}
+	}
 
+	needsDownload := false
 	if album == nil {
 		detailed, err := idx.GetAlbumDetails(ctx, sourceID)
 		if err != nil {
@@ -77,6 +94,13 @@ func (o *Orchestrator) AddAlbum(ctx context.Context, sourceID string, download b
 		if detailed == nil {
 			return nil, fmt.Errorf("album %s not found on %s", sourceID, idx.Name())
 		}
+		if detailed.Source == "" {
+			detailed.Source = idx.Name()
+		}
+		if detailed.SourceID == "" {
+			detailed.SourceID = sourceID
+		}
+		detailed.ID = o.libraryID(detailed.Source, detailed.SourceID)
 		artist, err := o.ensureArtistForAlbum(ctx, idx, detailed)
 		if err != nil {
 			return nil, err
@@ -88,16 +112,34 @@ func (o *Orchestrator) AddAlbum(ctx context.Context, sourceID string, download b
 		normalizeTracks(detailed)
 		detailed.Monitored = true
 		detailed.Status = domain.StatusPending
+		if len(picked) > 0 && len(picked) < len(detailed.Tracks) {
+			detailed.WantedTrackIDs = picked
+		}
 		album = detailed
+		needsDownload = true
 	} else {
 		album.Monitored = true
+		if len(album.Tracks) == 0 && len(picked) > 0 {
+			if full, err := o.EnsureAlbumTracks(ctx, album.ID); err == nil && full != nil {
+				album = full
+				album.Monitored = true
+			}
+		}
+		wanted, changed := mergeWanted(album, picked)
+		album.WantedTrackIDs = wanted
+		needsDownload = album.Status != domain.StatusCompleted
+		if changed && album.Status == domain.StatusCompleted {
+			// New tracks were picked for a release that is already on disk.
+			album.Status = domain.StatusPending
+			needsDownload = true
+		}
 	}
 
 	if err := o.repo.SaveAlbum(ctx, album); err != nil {
 		return nil, fmt.Errorf("save album: %w", err)
 	}
 
-	if download && album.Status != domain.StatusCompleted {
+	if req.Download && needsDownload {
 		if _, err := o.EnqueueAlbumDownload(album.ID); err != nil {
 			return album, fmt.Errorf("queue download: %w", err)
 		}
@@ -110,7 +152,7 @@ func (o *Orchestrator) AddAlbum(ctx context.Context, sourceID string, download b
 // unmonitored entry when the artist is new.
 func (o *Orchestrator) ensureArtistForAlbum(ctx context.Context, idx indexer.Indexer, album *domain.Album) (*domain.Artist, error) {
 	if album.ArtistID != "" {
-		if a, err := o.repo.GetArtist(ctx, album.ArtistID); err == nil && a != nil {
+		if a, err := o.lookupArtist(ctx, idx.Name(), album.ArtistID); err == nil && a != nil {
 			return a, nil
 		}
 	}
@@ -125,7 +167,7 @@ func (o *Orchestrator) ensureArtistForAlbum(ctx context.Context, idx indexer.Ind
 	}
 
 	artist := &domain.Artist{
-		ID:       album.ArtistID,
+		ID:       o.libraryID(idx.Name(), album.ArtistID),
 		SourceID: album.ArtistID,
 		Name:     album.ArtistName,
 		Source:   idx.Name(),
@@ -141,7 +183,7 @@ func (o *Orchestrator) ensureArtistForAlbum(ctx context.Context, idx indexer.Ind
 			}
 		}
 	}
-	if artist.ID == "" {
+	if album.ArtistID == "" {
 		artist.ID = "artist-" + normalizeKey(artist.Name)
 		artist.SourceID = artist.ID
 	}

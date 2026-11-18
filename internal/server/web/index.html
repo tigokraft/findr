@@ -233,15 +233,16 @@
         <div class="search-hero">
           <p class="eyebrow">Search &amp; Add</p>
           <h2 class="h-xl" id="searchHeadline">Find an artist and track every release.</h2>
-          <p class="lead" id="searchLead">Deezer answers without an account. Qobuz searches its hi-res catalog. Open any result to see the discography before you add it.</p>
+          <p class="lead" id="searchLead">Search Deezer or Qobuz, or paste a link from Spotify, Apple Music, TIDAL, YouTube Music, Deezer, Qobuz, SoundCloud, Bandcamp or Amazon Music. Open any result to preview it before you add it.</p>
           <div class="seg" id="searchModeSeg" role="radiogroup" aria-label="Search for" style="margin-bottom:14px">
             <button type="button" class="active" data-mode="artists" role="radio" aria-checked="true" onclick="setSearchMode('artists')">Artists</button>
-            <button type="button" data-mode="albums" role="radio" aria-checked="false" onclick="setSearchMode('albums')">Albums</button>
+            <button type="button" data-mode="albums" role="radio" aria-checked="false" onclick="setSearchMode('albums')">Releases</button>
+            <button type="button" data-mode="tracks" role="radio" aria-checked="false" onclick="setSearchMode('tracks')">Tracks</button>
           </div>
           <form class="search-bar" onsubmit="event.preventDefault(); executeSearch();">
             <div class="input-pill lg">
               <svg class="i"><use href="#i-search"/></svg>
-              <input type="search" id="searchQueryInput" placeholder="Artist name" aria-label="Search query" enterkeyhint="search" autocomplete="off">
+              <input type="search" id="searchQueryInput" placeholder="Artist name, or paste a link" aria-label="Search query or link" enterkeyhint="search" autocomplete="off">
               <kbd>⌘K</kbd>
             </div>
             <div class="seg" id="searchProviderSeg" role="radiogroup" aria-label="Catalog">
@@ -264,6 +265,8 @@
           <h3 class="section-title" id="searchResultsHeader">Results</h3>
           <span class="toolbar-meta" id="searchResultsCount"></span>
         </div>
+        <div class="seg" id="searchTypeSeg" role="radiogroup" aria-label="Release type" hidden style="margin:-4px 0 18px"></div>
+        <div id="linkResult"></div>
         <div class="folders" id="searchResultsGrid"></div>
       </section>
 
@@ -704,6 +707,30 @@
 </nav>
 
 <div class="batchbar" id="artistBatchToolbar" hidden></div>
+
+<dialog class="picker" id="pickerDialog" aria-labelledby="pickerTitle" onclick="if (event.target === this) closePicker()">
+  <div class="picker-inner">
+    <div class="picker-head">
+      <img class="picker-cover" id="pickerCover" alt="" onerror="imgFail(this)">
+      <div class="picker-meta">
+        <p class="eyebrow" id="pickerEyebrow">Release</p>
+        <h3 class="picker-title" id="pickerTitle">Loading</h3>
+        <p class="picker-sub" id="pickerSub"></p>
+      </div>
+      <button class="btn btn-icon" type="button" onclick="closePicker()" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="picker-note" id="pickerNote" hidden></div>
+    <div class="picker-tools" id="pickerTools" hidden>
+      <label class="picker-all"><input type="checkbox" id="pickerAll" onchange="pickerToggleAll(this.checked)"><span>All tracks</span></label>
+      <span class="toolbar-meta" id="pickerCount"></span>
+    </div>
+    <div class="picker-body" id="pickerBody"></div>
+    <div class="picker-foot" id="pickerFoot" hidden>
+      <button class="btn" type="button" id="pickerTrackBtn" onclick="pickerSubmit(false)"><svg class="i"><use href="#i-plus"/></svg>Track only</button>
+      <button class="btn btn-mint" type="button" id="pickerGetBtn" onclick="pickerSubmit(true)"><svg class="i"><use href="#i-download"/></svg><span id="pickerGetLabel">Download</span></button>
+    </div>
+  </div>
+</dialog>
 <div class="toasts" id="toastContainer" aria-live="polite"></div>
 
 <script>//__APP_JS__</script>

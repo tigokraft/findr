@@ -69,8 +69,37 @@ type Album struct {
 	Monitored   bool           `json:"monitored"`
 	Status      DownloadStatus `json:"status"`
 	Tracks      []Track        `json:"tracks,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	// WantedTrackIDs limits downloads to these tracks (Track.ID). Empty means
+	// the whole release.
+	WantedTrackIDs []string  `json:"wanted_track_ids,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// IsPartial reports whether only some of the release's tracks are wanted.
+func (a *Album) IsPartial() bool { return len(a.WantedTrackIDs) > 0 }
+
+// WantedTracks returns the tracks to download: the picked ones for a partial
+// release, every track otherwise. Picked IDs that are not in the tracklist are
+// ignored; if none match, the whole tracklist is returned.
+func (a *Album) WantedTracks() []Track {
+	if !a.IsPartial() {
+		return a.Tracks
+	}
+	want := make(map[string]bool, len(a.WantedTrackIDs))
+	for _, id := range a.WantedTrackIDs {
+		want[id] = true
+	}
+	out := make([]Track, 0, len(a.WantedTrackIDs))
+	for _, t := range a.Tracks {
+		if want[t.ID] || (t.SourceID != "" && want[t.SourceID]) {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return a.Tracks
+	}
+	return out
 }
 
 // Track represents an individual audio track within an album.

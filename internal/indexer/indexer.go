@@ -57,3 +57,9 @@ type TrackSearcher interface {
 type ISRCResolver interface {
 	LookupISRC(ctx context.Context, isrc string) (*TrackHit, error)
 }
+
+// TrackGetter is implemented by indexers that can fetch one track by its ID
+// (used to resolve track links to the release they belong to).
+type TrackGetter interface {
+	GetTrack(ctx context.Context, id string) (*TrackHit, error)
+}

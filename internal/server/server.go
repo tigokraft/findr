@@ -65,6 +65,9 @@ func NewServer(cfg *config.Config, configPath string, orch *orchestrator.Orchest
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/search/preview", s.handleSearchPreview)
 	mux.HandleFunc("/api/search/albums", s.handleSearchAlbums)
+	mux.HandleFunc("/api/search/tracks", s.handleSearchTracks)
+	mux.HandleFunc("/api/catalog/album", s.handleCatalogAlbum)
+	mux.HandleFunc("/api/resolve", s.handleResolveLink)
 	mux.HandleFunc("/api/files", s.handleFiles)
 	mux.HandleFunc("/api/files/roots", s.handleFileRoots)
 	mux.HandleFunc("/api/files/raw", s.handleFileRaw)
@@ -360,7 +363,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artists, err := s.orch.SearchArtists(r.Context(), query)
+	artists, err := s.orch.SearchArtists(r.Context(), r.URL.Query().Get("provider"), query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -377,7 +380,7 @@ func (s *Server) handleSearchPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	albums, err := s.orch.GetArtistReleasesFromIndexer(r.Context(), artistID)
+	albums, err := s.orch.GetArtistReleasesFromIndexer(r.Context(), r.URL.Query().Get("provider"), artistID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

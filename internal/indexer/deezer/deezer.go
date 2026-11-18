@@ -493,10 +493,11 @@ func (t trackSearchItem) hit() indexer.TrackHit {
 // SearchTrack searches tracks by artist and title using Deezer's advanced search
 // syntax, falling back to a plain query when the strict form finds nothing.
 func (c *Client) SearchTrack(ctx context.Context, artist, title string) ([]indexer.TrackHit, error) {
-	queries := []string{
-		fmt.Sprintf("artist:\"%s\" track:\"%s\"", artist, title),
-		strings.TrimSpace(artist + " " + title),
+	var queries []string
+	if strings.TrimSpace(artist) != "" {
+		queries = append(queries, fmt.Sprintf("artist:\"%s\" track:\"%s\"", artist, title))
 	}
+	queries = append(queries, strings.TrimSpace(artist+" "+title))
 	for _, q := range queries {
 		var res struct {
 			Data []trackSearchItem `json:"data"`
@@ -520,6 +521,19 @@ func (c *Client) SearchTrack(ctx context.Context, artist, title string) ([]index
 func (c *Client) LookupISRC(ctx context.Context, isrc string) (*indexer.TrackHit, error) {
 	var t trackSearchItem
 	if err := c.getJSON(ctx, "/track/isrc:"+url.PathEscape(isrc), &t); err != nil {
+		return nil, err
+	}
+	if t.Error != nil || t.ID == 0 || t.Album.ID == 0 {
+		return nil, nil
+	}
+	h := t.hit()
+	return &h, nil
+}
+
+// GetTrack fetches one track by its Deezer ID. Returns nil, nil when not found.
+func (c *Client) GetTrack(ctx context.Context, id string) (*indexer.TrackHit, error) {
+	var t trackSearchItem
+	if err := c.getJSON(ctx, "/track/"+url.PathEscape(id), &t); err != nil {
 		return nil, err
 	}
 	if t.Error != nil || t.ID == 0 || t.Album.ID == 0 {

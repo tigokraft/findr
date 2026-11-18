@@ -478,13 +478,15 @@ func (d *Downloader) Download(ctx context.Context, album *domain.Album, targetDi
 			if qID, ok := qobuzMatch.trackByNum[trackNum]; ok && qID != "" {
 				trackID = qID
 				trackMatched = true
-			} else if qID, ok := qobuzMatch.trackByNum[i+1]; ok && qID != "" {
+			} else if qID, ok := qobuzMatch.trackByNum[i+1]; ok && qID != "" && !album.IsPartial() {
+				// Position fallbacks only hold for the full tracklist; a partial
+				// release has gaps, so it relies on number and title.
 				trackID = qID
 				trackMatched = true
 			} else if qID, ok := qobuzMatch.trackByTitle[strings.ToLower(strings.TrimSpace(trk.Title))]; ok && qID != "" {
 				trackID = qID
 				trackMatched = true
-			} else if i < len(qobuzMatch.tracks) {
+			} else if i < len(qobuzMatch.tracks) && !album.IsPartial() {
 				trackID = qobuzMatch.tracks[i]
 				trackMatched = true
 			}
